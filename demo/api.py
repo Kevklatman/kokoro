@@ -47,7 +47,20 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Enable CORS
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Input models for API requests
+class PreprocessRequest(BaseModel):
+    text: str
+
 class TTSRequest(BaseModel):
     text: str
     voice: str = "af_heart"
@@ -62,48 +75,9 @@ class TokenizeRequest(BaseModel):
     text: str
     voice: str = "af_heart"
 
-# Text preprocessing function to handle paragraphs better
+# Simple pass-through function (no preprocessing as it's handled on the frontend)
 def preprocess_text(text):
-    """
-    Preprocess text to make it more suitable for TTS by handling paragraphs properly.
-    This helps prevent unnatural pauses at newlines within paragraphs.
-    Also applies fixes for common text-to-speech pronunciation issues.
-    """
-    # Replace multiple newlines with a special marker
-    text = re.sub(r'\n{2,}', ' PARAGRAPH_BREAK ', text)
-    
-    # Replace single newlines with spaces
-    text = re.sub(r'\n', ' ', text)
-    
-    # Restore paragraph breaks with proper punctuation pause
-    text = re.sub(r'PARAGRAPH_BREAK', '.\n', text)
-    
-    # Ensure proper spacing after punctuation
-    text = re.sub(r'([.!?])([^\s"\'])', r'\1 \2', text)
-    
-    # Fix for uppercase 'I' and lowercase 'l' pronunciation issues
-    # Handle common tech abbreviations by separating letters
-    text = re.sub(r'\b(API|UI|CLI|URI)\b', lambda m: ' '.join(m.group(1)), text)
-    
-    # Handle contractions with 'I' (I'm, I'd, I've, I'll, etc.)
-    contractions = {
-        "I'm": "eye'm", 
-        "I'd": "eye'd", 
-        "I've": "eye've", 
-        "I'll": "eye'll",
-        "I'd": "eye'd",
-        "I's": "eye's",
-        "L'd": "eye'd",
-    }
-    for contraction, replacement in contractions.items():
-        text = text.replace(contraction, replacement)
-    
-    # For standalone uppercase 'I', replace with "eye" which is pronounced correctly
-    text = re.sub(r'([^A-Za-z]|^)I([^A-Za-z]|$)', r'\1eye\2', text)
-    
-    # Normalize whitespace
-    text = re.sub(r'\s+', ' ', text)
-    
+    """Simple text pass-through - preprocessing handled on frontend"""
     return text.strip()
 
 # Core TTS functionality from original app.py
@@ -166,6 +140,11 @@ def tokenize_text(text, voice='af_heart'):
 @app.get("/")
 async def root():
     return {"message": "Kokoro TTS API is running. Visit /docs for API documentation."}
+
+@app.post("/preprocess")
+def preprocess_text_endpoint(request: PreprocessRequest):
+    processed = preprocess_text(request.text)
+    return {"original": request.text, "processed": processed}
 
 @app.get("/voices")
 async def list_voices():

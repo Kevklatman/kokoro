@@ -140,7 +140,7 @@ class KPipeline:
                 raise
         else:
             language = LANG_CODES[lang_code]
-            logger.warning(f"Using EspeakG2P(language='{language}'). Chunking logic not yet implemented, so long texts may be truncated unless you split them with '\\n'.")
+            logger.warning(f"Using EspeakG2P(language='{language}'). Enhanced chunking logic is now implemented to handle longer texts, but splitting with '\\n' may still improve results.")
             self.g2p = espeak.EspeakG2P(language=language)
 
     def load_single_voice(self, voice: str):
@@ -387,9 +387,9 @@ class KPipeline:
                 for gs, ps, tks in self.en_tokenize(tokens):
                     if not ps:
                         continue
-                    elif len(ps) > 510:
-                        logger.warning(f"Unexpected len(ps) == {len(ps)} > 510 and ps == '{ps}'")
-                        ps = ps[:510]
+                    elif len(ps) > 75000:  # ~25 pages at 3000 chars per page
+                        logger.warning(f"Very long phoneme sequence: {len(ps)} characters. Truncating to 75000 characters.")
+                        ps = ps[:75000]
                     output = KPipeline.infer(model, ps, pack, speed) if model else None
                     if output is not None and output.pred_dur is not None:
                         KPipeline.join_timestamps(tks, output.pred_dur)
@@ -397,9 +397,9 @@ class KPipeline:
             
             # Non-English processing with chunking
             else:
-                # Split long text into smaller chunks (roughly 400 characters each)
+                # Split long text into larger chunks (roughly 3000 characters each)
                 # Using sentence boundaries when possible
-                chunk_size = 400
+                chunk_size = 3000
                 chunks = []
                 
                 # Try to split on sentence boundaries first
@@ -434,9 +434,9 @@ class KPipeline:
                     ps, _ = self.g2p(chunk)
                     if not ps:
                         continue
-                    elif len(ps) > 510:
-                        logger.warning(f'Truncating len(ps) == {len(ps)} > 510')
-                        ps = ps[:510]
+                    elif len(ps) > 75000:  # ~25 pages at 3000 chars per page
+                        logger.warning(f'Very long phoneme sequence: {len(ps)} characters. Truncating to 75000 characters.')
+                        ps = ps[:75000]
                         
                     output = KPipeline.infer(model, ps, pack, speed) if model else None
                     yield self.Result(graphemes=chunk, phonemes=ps, output=output, text_index=graphemes_index)

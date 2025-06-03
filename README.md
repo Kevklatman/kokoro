@@ -127,3 +127,86 @@ dependencies:
 - 🪽 Kokoro is a Japanese word that translates to "heart" or "spirit". Kokoro is also a [character in the Terminator franchise](https://terminator.fandom.com/wiki/Kokoro) along with [Misaki](https://github.com/hexgrad/misaki?tab=readme-ov-file#acknowledgements).
 
 <img src="https://static0.gamerantimages.com/wordpress/wp-content/uploads/2024/08/terminator-zero-41-1.jpg" width="400" alt="kokoro" />
+
+
+
+
+# pretty solid for literature
+
+🇺🇸 🚺 Bella 🔥
+Hardware
+GPU is usually faster, but has a usage quota
+
+CPU 🐌
+Speed
+1.1
+↺
+0.5
+
+2
+
+Emotion Controls
+▼
+Breathiness
+0.1
+↺
+0
+
+1
+Tenseness
+0.1
+↺
+0
+
+1
+Jitter/Tremor
+0.15
+↺
+0
+
+1
+Sultry
+0.1
+↺
+0
+
+1
+
+# great for articles
+
+🇺🇸 🚺 Sky
+Hardware
+GPU is usually faster, but has a usage quota
+
+CPU 🐌
+Speed
+1
+↺
+0.5
+
+2
+
+Emotion Controls
+▼
+Breathiness
+0.15
+↺
+0
+
+1
+Tenseness
+0.5
+↺
+0
+
+1
+Jitter/Tremor
+0.3
+↺
+0
+
+1
+Sultry
+0.1
+↺
+0

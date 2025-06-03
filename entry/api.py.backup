@@ -76,7 +76,7 @@ class TokenizeRequest(BaseModel):
     text: str
     voice: str = "af_heart"
 
-# Text preprocessing function
+# Simple pass-through function (no preprocessing as it's handled on the frontend)
 def preprocess_text(text):
     """Preprocess text to handle paragraph flow properly"""
     # Strip whitespace
@@ -149,10 +149,9 @@ def generate_audio(text, voice='af_heart', speed=1, use_gpu=CUDA_AVAILABLE,
 def tokenize_text(text, voice='af_heart'):
     """Tokenize text to phonemes without generating audio"""
     pipeline = pipelines[voice[0]]
-    result_phonemes = []
     for _, ps, _ in pipeline(text, voice):
-        result_phonemes.append(ps)
-    return '\n'.join(result_phonemes)
+        return ps
+    return ''
 
 # API Endpoints
 @app.get("/")
@@ -175,12 +174,9 @@ async def text_to_speech(request: TTSRequest):
     Convert text to speech and return audio as WAV file
     """
     try:
-        # Select voice based on fiction parameter
-        selected_voice = select_voice(request.voice, request.fiction)
-        
         # Validate voice
-        if selected_voice not in VOICES:
-            raise HTTPException(status_code=400, detail=f"Voice '{selected_voice}' not found. Available voices: {list(VOICES)}")
+        if request.voice not in VOICES:
+            raise HTTPException(status_code=400, detail=f"Voice '{request.voice}' not found. Available voices: {list(VOICES)}")
         
         # Preprocess text for better paragraph handling
         preprocessed_text = preprocess_text(request.text)
@@ -188,7 +184,7 @@ async def text_to_speech(request: TTSRequest):
         # Generate audio
         (sample_rate, audio_data), phonemes = generate_audio(
             preprocessed_text, 
-            selected_voice,  # Use the selected voice here
+            request.voice, 
             request.speed, 
             request.use_gpu,
             request.breathiness,
@@ -246,12 +242,9 @@ async def text_to_speech_base64(request: TTSRequest):
     (easier for mobile apps to handle)
     """
     try:
-        # Select voice based on fiction parameter
-        selected_voice = select_voice(request.voice, request.fiction)
-        
         # Validate voice
-        if selected_voice not in VOICES:
-            raise HTTPException(status_code=400, detail=f"Voice '{selected_voice}' not found. Available voices: {list(VOICES)}")
+        if request.voice not in VOICES:
+            raise HTTPException(status_code=400, detail=f"Voice '{request.voice}' not found. Available voices: {list(VOICES)}")
         
         # Preprocess text for better paragraph handling
         preprocessed_text = preprocess_text(request.text)
@@ -259,7 +252,7 @@ async def text_to_speech_base64(request: TTSRequest):
         # Generate audio
         (sample_rate, audio_data), phonemes = generate_audio(
             preprocessed_text, 
-            selected_voice,  # Use the selected voice here
+            request.voice, 
             request.speed, 
             request.use_gpu,
             request.breathiness,

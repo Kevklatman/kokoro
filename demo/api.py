@@ -67,6 +67,7 @@ def preprocess_text(text):
     """
     Preprocess text to make it more suitable for TTS by handling paragraphs properly.
     This helps prevent unnatural pauses at newlines within paragraphs.
+    Also applies fixes for common text-to-speech pronunciation issues.
     """
     # Replace multiple newlines with a special marker
     text = re.sub(r'\n{2,}', ' PARAGRAPH_BREAK ', text)
@@ -79,6 +80,26 @@ def preprocess_text(text):
     
     # Ensure proper spacing after punctuation
     text = re.sub(r'([.!?])([^\s"\'])', r'\1 \2', text)
+    
+    # Fix for uppercase 'I' and lowercase 'l' pronunciation issues
+    # Handle common tech abbreviations by separating letters
+    text = re.sub(r'\b(API|UI|CLI|URI)\b', lambda m: ' '.join(m.group(1)), text)
+    
+    # Handle contractions with 'I' (I'm, I'd, I've, I'll, etc.)
+    contractions = {
+        "I'm": "eye'm", 
+        "I'd": "eye'd", 
+        "I've": "eye've", 
+        "I'll": "eye'll",
+        "I'd": "eye'd",
+        "I's": "eye's",
+        "L'd": "eye'd",
+    }
+    for contraction, replacement in contractions.items():
+        text = text.replace(contraction, replacement)
+    
+    # For standalone uppercase 'I', replace with "eye" which is pronounced correctly
+    text = re.sub(r'([^A-Za-z]|^)I([^A-Za-z]|$)', r'\1eye\2', text)
     
     # Normalize whitespace
     text = re.sub(r'\s+', ' ', text)

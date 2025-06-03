@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
+import re
 import uvicorn
 import base64
 import io
@@ -60,6 +61,29 @@ class TTSRequest(BaseModel):
 class TokenizeRequest(BaseModel):
     text: str
     voice: str = "af_heart"
+
+# Text preprocessing function to handle paragraphs better
+def preprocess_text(text):
+    """
+    Preprocess text to make it more suitable for TTS by handling paragraphs properly.
+    This helps prevent unnatural pauses at newlines within paragraphs.
+    """
+    # Replace multiple newlines with a special marker
+    text = re.sub(r'\n{2,}', ' PARAGRAPH_BREAK ', text)
+    
+    # Replace single newlines with spaces
+    text = re.sub(r'\n', ' ', text)
+    
+    # Restore paragraph breaks with proper punctuation pause
+    text = re.sub(r'PARAGRAPH_BREAK', '.\n', text)
+    
+    # Ensure proper spacing after punctuation
+    text = re.sub(r'([.!?])([^\s"\'])', r'\1 \2', text)
+    
+    # Normalize whitespace
+    text = re.sub(r'\s+', ' ', text)
+    
+    return text.strip()
 
 # Core TTS functionality from original app.py
 def forward_gpu(ps, ref_s, speed):
@@ -137,9 +161,12 @@ async def text_to_speech(request: TTSRequest):
         if request.voice not in VOICES:
             raise HTTPException(status_code=400, detail=f"Voice '{request.voice}' not found. Available voices: {list(VOICES)}")
         
+        # Preprocess text for better paragraph handling
+        preprocessed_text = preprocess_text(request.text)
+        
         # Generate audio
         (sample_rate, audio_data), phonemes = generate_audio(
-            request.text, 
+            preprocessed_text, 
             request.voice, 
             request.speed, 
             request.use_gpu,
@@ -202,9 +229,12 @@ async def text_to_speech_base64(request: TTSRequest):
         if request.voice not in VOICES:
             raise HTTPException(status_code=400, detail=f"Voice '{request.voice}' not found. Available voices: {list(VOICES)}")
         
+        # Preprocess text for better paragraph handling
+        preprocessed_text = preprocess_text(request.text)
+        
         # Generate audio
         (sample_rate, audio_data), phonemes = generate_audio(
-            request.text, 
+            preprocessed_text, 
             request.voice, 
             request.speed, 
             request.use_gpu,

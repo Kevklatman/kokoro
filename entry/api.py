@@ -26,13 +26,55 @@ pipelines = {lang_code: KPipeline(lang_code=lang_code, model=False) for lang_cod
 pipelines['a'].g2p.lexicon.golds['kokoro'] = 'kˈOkəɹO'
 pipelines['b'].g2p.lexicon.golds['kokoro'] = 'kˈQkəɹQ'
 
-# Use a subset of known working voices (based on the error messages)
-VOICES = {
-    'af_heart', 'af_bella', 'af_nicole', 'af_aoede', 'af_kore', 'af_sarah', 'af_nova', 
-    'af_sky', 'af_alloy', 'af_jessica', 'af_river', 'am_michael', 'am_fenrir',
-    'am_kevin', 'am_josh', 'am_adam', 'am_jack', 'bf_ruby', 'bf_selene',
-    'bm_michael', 'bm_kevin'
+# Voice choices and presets migrated from app.py
+CHOICES = {
+    '🇺🇸 🚺 Heart ❤️': 'af_heart',
+    '🇺🇸 🚺 Bella 🔥': 'af_bella',
+    '🇺🇸 🚺 Nicole 🎧': 'af_nicole',
+    '🇺🇸 🚺 Aoede': 'af_aoede',
+    '🇺🇸 🚺 Kore': 'af_kore',
+    '🇺🇸 🚺 Sarah': 'af_sarah',
+    '🇺🇸 🚺 Nova': 'af_nova',
+    '🇺🇸 🚺 Sky': 'af_sky',
+    '🇺🇸 🚺 Alloy': 'af_alloy',
+    '🇺🇸 🚺 Jessica': 'af_jessica',
+    '🇺🇸 🚺 River': 'af_river',
+    '🇺🇸 🚹 Michael': 'am_michael',
+    '🇺🇸 🚹 Fenrir': 'am_fenrir',
+    '🇺🇸 🚹 Nolan': 'am_nolan',
+    '🇺🇸 🚹 Kevin': 'am_kevin',
+    '🇺🇸 🚹 Josh': 'am_josh',
+    '🇺🇸 🚹 Adam': 'am_adam',
+    '🇬🇧 🚺 Ruby': 'bf_ruby',
+    '🇬🇧 🚺 Selene': 'bf_selene',
+    '🇬🇧 🚹 Michael': 'bm_michael',
+    '🇬🇧 🚹 Kevin': 'bm_kevin',
+    '🇬🇧 🚹 Daniel': 'bm_daniel',
 }
+
+# === OFFICIAL, CANONICAL PRESETS (do not change without explicit user direction) ===
+VOICE_PRESETS = {
+    'literature': {
+        'voice': 'af_bella',  # Bella
+        'speed': 1.1,
+        'breathiness': 0.1,
+        'tenseness': 0.1,
+        'jitter': 0.15,
+        'sultry': 0.1
+    },
+    'articles': {
+        'voice': 'af_sky',    # Sky
+        'speed': 1.0,
+        'breathiness': 0.15,
+        'tenseness': 0.5,
+        'jitter': 0.3,
+        'sultry': 0.1
+    }
+}
+# === END OFFICIAL PRESETS ===
+
+# Use a subset of known working voices (based on the error messages)
+VOICES = set(CHOICES.values())
 
 # Safely load voices, skipping any that fail
 available_voices = set()
@@ -223,33 +265,27 @@ def preprocess_text(text):
     text = re.sub(r'([^\n])\n([^\n])', r'\1 \2', text)
     return text
 
-# Helper function to select voice based on fiction parameter
-def select_voice_and_preset(requested_voice, is_fiction):
-    """Select appropriate voice and emotion preset based on fiction parameter"""
+# Helper function to select voice and preset by name
+
+def select_voice_and_preset(requested_voice, preset_name=None):
+    """
+    Select voice and emotion preset.
+    If preset_name is given and valid, use preset. Otherwise, use requested_voice (or default).
+    Returns (voice_id, emotion_preset_dict or None)
+    """
+    if preset_name and preset_name in VOICE_PRESETS:
+        preset = VOICE_PRESETS[preset_name]
+        return preset['voice'], {
+            'speed': preset.get('speed', 1.0),
+            'breathiness': preset.get('breathiness', 0.0),
+            'tenseness': preset.get('tenseness', 0.0),
+            'jitter': preset.get('jitter', 0.0),
+            'sultry': preset.get('sultry', 0.0)
+        }
     if requested_voice is not None:
-        return requested_voice, None  # Use specified voice if provided, no preset emotions
-    
-    # Default voices with emotion presets
-    if is_fiction:
-        voice_id = "af_bella"  # 🇺🇸 🚺 Bella 🔥
-        emotion_preset = {
-            "speed": 1,
-            "breathiness": 0.0,
-            "tenseness": 0.0,
-            "jitter": 0.0,
-            "sultry": 0.0
-        }
-    else:
-        voice_id = "af_sky"  # 🇺🇸 🚺 Sky
-        emotion_preset = {
-            "speed": 1,
-            "breathiness": 0.0,
-            "tenseness": 0.0,
-            "jitter": 0.0,
-            "sultry": 0.0
-        }
-        
-    return voice_id, emotion_preset
+        return requested_voice, None
+    # Fallback: default
+    return 'af_heart', None
 
 # Core TTS functionality from original app.py
 def forward_gpu(ps, ref_s, speed):
@@ -316,11 +352,36 @@ async def list_voices():
     """List all available voices"""
     return {"voices": list(VOICES)}
 
+@app.get("/voice-choices")
+async def list_voice_choices():
+    """List user-friendly voice choices (display name and id)"""
+    return {"choices": CHOICES}
+
+@app.get("/voice-presets")
+async def list_voice_presets():
+    """List available voice presets and their parameters"""
+    return {"presets": VOICE_PRESETS}
+
+@app.get("/voice-presets/{preset_name}")
+async def get_voice_preset(preset_name: str):
+    """Get a specific voice preset"""
+    if preset_name in VOICE_PRESETS:
+        return {"preset": VOICE_PRESETS[preset_name]}
+    else:
+        raise HTTPException(status_code=404, detail="Preset not found")
+
+@app.get("/choices")
+async def list_choices():
+    """List user-friendly voice choices (display name and id)"""
+    return {"choices": CHOICES}
+
 @app.post("/tts")
 async def text_to_speech(request: TTSRequest):
-    """Convert text to speech and return audio as WAV file"""
+    """Convert text to speech and return audio as WAV file. Supports voice presets."""
     try:
-        selected_voice, emotion_preset = select_voice_and_preset(request.voice, request.fiction)
+        # Support for presets: if request has 'preset' field, use it
+        preset_name = getattr(request, 'preset', None) if hasattr(request, 'preset') else None
+        selected_voice, emotion_preset = select_voice_and_preset(request.voice, preset_name)
 
         if selected_voice not in VOICES:
             raise HTTPException(status_code=400, detail=f"Voice '{selected_voice}' not found. Available voices: {list(VOICES)}")
@@ -354,37 +415,22 @@ async def text_to_speech(request: TTSRequest):
             jitter,
             sultry
         )
-        
         if audio_data is None:
-            raise HTTPException(status_code=500, detail="Failed to generate audio")
-        
-        import wave
-        import struct
-        
+            raise HTTPException(status_code=500, detail="Audio generation failed")
+
+        import wave, io, base64, numpy as np
         audio_buffer = io.BytesIO()
         channels = 1
         sampwidth = 2
-        
         with wave.open(audio_buffer, 'wb') as wav_file:
             wav_file.setnchannels(channels)
             wav_file.setsampwidth(sampwidth)
             wav_file.setframerate(sample_rate)
-            
             scaled = np.clip(audio_data, -1.0, 1.0)
             scaled = (scaled * 32767).astype(np.int16)
             wav_file.writeframes(scaled.tobytes())
-        
         audio_buffer.seek(0)
-        
-        return StreamingResponse(
-            audio_buffer, 
-            media_type="audio/wav",
-            headers={
-                "Content-Disposition": f"attachment; filename=kokoro_tts.wav",
-                "X-Phonemes": base64.b64encode(phonemes.encode()).decode()
-            }
-        )
-    
+        return StreamingResponse(audio_buffer, media_type="audio/wav")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

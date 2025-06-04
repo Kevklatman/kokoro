@@ -206,7 +206,7 @@ def process_queue():
                 processing_jobs[job_id] = jobs_storage[job_id]
                 print(f"🔄 Processing job {job_id}: {job.title}")
                 try:
-                    selected_voice, emotion_preset = select_voice_and_preset(job.voice, job.fiction)
+                    selected_voice, emotion_preset = select_voice_and_preset(job.voice, None, job.fiction)
                     speed = emotion_preset.get("speed", job.speed) if emotion_preset and job.speed == 1.0 else job.speed
                     breathiness = emotion_preset.get("breathiness", job.breathiness) if emotion_preset and job.breathiness == 0.0 else job.breathiness
                     tenseness = emotion_preset.get("tenseness", job.tenseness) if emotion_preset and job.tenseness == 0.0 else job.tenseness

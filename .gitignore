@@ -179,3 +179,11 @@ kokoro-py312-env/
 fiction.wav
 nonfiction.wav
 uv.lock
+
+pyproject.toml
+
+uv.lock
+
+README.md
+
+LICENSE

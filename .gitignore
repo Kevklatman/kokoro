@@ -172,3 +172,10 @@ cython_debug/
 
 kokoro.js/
 
+tests/
+
+kokoro-py312-env/
+
+fiction.wav
+nonfiction.wav
+uv.lock

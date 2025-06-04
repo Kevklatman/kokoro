@@ -89,12 +89,12 @@ def preprocess_text(text):
     return text
 
 # Helper function to select voice based on fiction parameter
-def select_voice(requested_voice, is_fiction):
-    """Select appropriate voice based on fiction parameter if no voice specified"""
+def select_voice_and_preset(requested_voice, is_fiction):
+    """Select appropriate voice and emotion preset based on fiction parameter"""
     if requested_voice is not None:
         return requested_voice, None  # Use specified voice if provided, no preset emotions
     
-    # Default voices with emotion presets from the README
+    # Default voices with emotion presets
     if is_fiction:
         # Voice for literature: Bella with emotion settings
         voice_id = "af_bella"  # 🇺🇸 🚺 Bella 🔥
@@ -119,6 +119,7 @@ def select_voice(requested_voice, is_fiction):
         }
         
     return voice_id, emotion_preset
+        
 
 # Core TTS functionality from original app.py
 def forward_gpu(ps, ref_s, speed):
@@ -284,33 +285,21 @@ async def text_to_speech(request: TTSRequest):
 async def text_to_speech_base64(request: TTSRequest):
     """
     Convert text to speech and return audio as base64 encoded string
-    (easier for mobile apps to handle)
     """
     try:
         # Select voice and emotion preset based on fiction parameter
-        selected_voice, emotion_preset = select_voice(request.voice, request.fiction)
+        selected_voice, emotion_preset = select_voice_and_preset(request.voice, request.fiction)
         
         # Validate voice
         if selected_voice not in VOICES:
             raise HTTPException(status_code=400, detail=f"Voice '{selected_voice}' not found. Available voices: {list(VOICES)}")
         
-        # Apply emotion presets if available and not overridden
-        speed = request.speed
-        breathiness = request.breathiness
-        tenseness = request.tenseness
-        jitter = request.jitter
-        sultry = request.sultry
-        if emotion_preset:
-            if request.speed == 1.0 and "speed" in emotion_preset:
-                speed = emotion_preset["speed"]
-            if request.breathiness == 0.0 and "breathiness" in emotion_preset:
-                breathiness = emotion_preset["breathiness"]
-            if request.tenseness == 0.0 and "tenseness" in emotion_preset:
-                tenseness = emotion_preset["tenseness"]
-            if request.jitter == 0.0 and "jitter" in emotion_preset:
-                jitter = emotion_preset["jitter"]
-            if request.sultry == 0.0 and "sultry" in emotion_preset:
-                sultry = emotion_preset["sultry"]
+        # Apply emotion presets if available and not overridden by request
+        speed = emotion_preset.get("speed", request.speed) if emotion_preset and request.speed == 1.0 else request.speed
+        breathiness = emotion_preset.get("breathiness", request.breathiness) if emotion_preset and request.breathiness == 0.0 else request.breathiness
+        tenseness = emotion_preset.get("tenseness", request.tenseness) if emotion_preset and request.tenseness == 0.0 else request.tenseness
+        jitter = emotion_preset.get("jitter", request.jitter) if emotion_preset and request.jitter == 0.0 else request.jitter
+        sultry = emotion_preset.get("sultry", request.sultry) if emotion_preset and request.sultry == 0.0 else request.sultry
 
         # Preprocess text for better paragraph handling
         preprocessed_text = preprocess_text(request.text)
@@ -318,7 +307,7 @@ async def text_to_speech_base64(request: TTSRequest):
         # Generate audio
         (sample_rate, audio_data), phonemes = generate_audio(
             preprocessed_text, 
-            selected_voice,  # Use the selected voice here
+            selected_voice,
             speed, 
             request.use_gpu,
             breathiness,
@@ -330,26 +319,20 @@ async def text_to_speech_base64(request: TTSRequest):
         if audio_data is None:
             raise HTTPException(status_code=500, detail="Failed to generate audio")
         
-        # Convert to WAV format without scipy
-        # Create a WAV file in memory using wave module from standard library
+        # Convert to WAV format
         import wave
         import struct
         
-        # Create an in-memory file-like object
         audio_buffer = io.BytesIO()
-        
-        # Sample rate, channels, sample width, etc.
         channels = 1  # Mono audio
         sampwidth = 2  # 16-bit audio
         
-        # Create the WAV file
         with wave.open(audio_buffer, 'wb') as wav_file:
             wav_file.setnchannels(channels)
             wav_file.setsampwidth(sampwidth)
             wav_file.setframerate(sample_rate)
             
             # Convert audio_data to 16-bit integers and write to the WAV file
-            # Scale and convert to 16-bit PCM
             scaled = np.clip(audio_data, -1.0, 1.0)
             scaled = (scaled * 32767).astype(np.int16)
             wav_file.writeframes(scaled.tobytes())

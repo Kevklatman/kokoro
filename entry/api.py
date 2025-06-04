@@ -92,10 +92,33 @@ def preprocess_text(text):
 def select_voice(requested_voice, is_fiction):
     """Select appropriate voice based on fiction parameter if no voice specified"""
     if requested_voice is not None:
-        return requested_voice  # Use specified voice if provided
+        return requested_voice, None  # Use specified voice if provided, no preset emotions
     
-    # Default voices
-    return "af_bella" if is_fiction else "af_sky"  # Bella for fiction, Sky for non-fiction
+    # Default voices with emotion presets from the README
+    if is_fiction:
+        # Voice for literature: Bella with emotion settings
+        voice_id = "af_bella"  # 🇺🇸 🚺 Bella 🔥
+        # Literature preset emotions
+        emotion_preset = {
+            "speed": 1.1,
+            "breathiness": 0.1,
+            "tenseness": 0.1,
+            "jitter": 0.15,
+            "sultry": 0.1
+        }
+    else:
+        # Voice for articles: Sky with emotion settings
+        voice_id = "af_sky"  # 🇺🇸 🚺 Sky
+        # Articles preset emotions
+        emotion_preset = {
+            "speed": 1.0,
+            "breathiness": 0.15,
+            "tenseness": 0.5,
+            "jitter": 0.3,
+            "sultry": 0.1
+        }
+        
+    return voice_id, emotion_preset
 
 # Core TTS functionality from original app.py
 def forward_gpu(ps, ref_s, speed):
@@ -175,26 +198,44 @@ async def text_to_speech(request: TTSRequest):
     Convert text to speech and return audio as WAV file
     """
     try:
-        # Select voice based on fiction parameter
-        selected_voice = select_voice(request.voice, request.fiction)
-        
+        # Select voice and emotion preset based on fiction parameter
+        selected_voice, emotion_preset = select_voice(request.voice, request.fiction)
+
         # Validate voice
         if selected_voice not in VOICES:
             raise HTTPException(status_code=400, detail=f"Voice '{selected_voice}' not found. Available voices: {list(VOICES)}")
-        
+
+        # Apply emotion presets if available and not overridden
+        speed = request.speed
+        breathiness = request.breathiness
+        tenseness = request.tenseness
+        jitter = request.jitter
+        sultry = request.sultry
+        if emotion_preset:
+            if request.speed == 1.0 and "speed" in emotion_preset:
+                speed = emotion_preset["speed"]
+            if request.breathiness == 0.0 and "breathiness" in emotion_preset:
+                breathiness = emotion_preset["breathiness"]
+            if request.tenseness == 0.0 and "tenseness" in emotion_preset:
+                tenseness = emotion_preset["tenseness"]
+            if request.jitter == 0.0 and "jitter" in emotion_preset:
+                jitter = emotion_preset["jitter"]
+            if request.sultry == 0.0 and "sultry" in emotion_preset:
+                sultry = emotion_preset["sultry"]
+
         # Preprocess text for better paragraph handling
         preprocessed_text = preprocess_text(request.text)
-        
+
         # Generate audio
         (sample_rate, audio_data), phonemes = generate_audio(
             preprocessed_text, 
             selected_voice,  # Use the selected voice here
-            request.speed, 
+            speed, 
             request.use_gpu,
-            request.breathiness,
-            request.tenseness,
-            request.jitter,
-            request.sultry
+            breathiness,
+            tenseness,
+            jitter,
+            sultry
         )
         
         if audio_data is None:
@@ -246,13 +287,31 @@ async def text_to_speech_base64(request: TTSRequest):
     (easier for mobile apps to handle)
     """
     try:
-        # Select voice based on fiction parameter
-        selected_voice = select_voice(request.voice, request.fiction)
+        # Select voice and emotion preset based on fiction parameter
+        selected_voice, emotion_preset = select_voice(request.voice, request.fiction)
         
         # Validate voice
         if selected_voice not in VOICES:
             raise HTTPException(status_code=400, detail=f"Voice '{selected_voice}' not found. Available voices: {list(VOICES)}")
         
+        # Apply emotion presets if available and not overridden
+        speed = request.speed
+        breathiness = request.breathiness
+        tenseness = request.tenseness
+        jitter = request.jitter
+        sultry = request.sultry
+        if emotion_preset:
+            if request.speed == 1.0 and "speed" in emotion_preset:
+                speed = emotion_preset["speed"]
+            if request.breathiness == 0.0 and "breathiness" in emotion_preset:
+                breathiness = emotion_preset["breathiness"]
+            if request.tenseness == 0.0 and "tenseness" in emotion_preset:
+                tenseness = emotion_preset["tenseness"]
+            if request.jitter == 0.0 and "jitter" in emotion_preset:
+                jitter = emotion_preset["jitter"]
+            if request.sultry == 0.0 and "sultry" in emotion_preset:
+                sultry = emotion_preset["sultry"]
+
         # Preprocess text for better paragraph handling
         preprocessed_text = preprocess_text(request.text)
         
@@ -260,12 +319,12 @@ async def text_to_speech_base64(request: TTSRequest):
         (sample_rate, audio_data), phonemes = generate_audio(
             preprocessed_text, 
             selected_voice,  # Use the selected voice here
-            request.speed, 
+            speed, 
             request.use_gpu,
-            request.breathiness,
-            request.tenseness,
-            request.jitter,
-            request.sultry
+            breathiness,
+            tenseness,
+            jitter,
+            sultry
         )
         
         if audio_data is None:
@@ -308,7 +367,6 @@ async def text_to_speech_base64(request: TTSRequest):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 @app.post("/tokenize")
 async def tokenize(request: TokenizeRequest):
     """

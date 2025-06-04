@@ -100,22 +100,22 @@ def select_voice(requested_voice, is_fiction):
         voice_id = "af_bella"  # 🇺🇸 🚺 Bella 🔥
         # Literature preset emotions
         emotion_preset = {
-            "speed": 1.1,
-            "breathiness": 0.1,
-            "tenseness": 0.1,
-            "jitter": 0.15,
-            "sultry": 0.1
+            "speed": 1,
+            "breathiness": 0.0,
+            "tenseness": 0.0,
+            "jitter": 0.0,
+            "sultry": 0.0
         }
     else:
         # Voice for articles: Sky with emotion settings
         voice_id = "af_sky"  # 🇺🇸 🚺 Sky
         # Articles preset emotions
         emotion_preset = {
-            "speed": 1.0,
-            "breathiness": 0.15,
-            "tenseness": 0.5,
-            "jitter": 0.3,
-            "sultry": 0.1
+            "speed": 1,
+            "breathiness": 0.0,
+            "tenseness": 0.0,
+            "jitter": 0.0,
+            "sultry": 0.0
         }
         
     return voice_id, emotion_preset

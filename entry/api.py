@@ -3,6 +3,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import re
+import uuid
+import time
+from enum import Enum
+from datetime import datetime
+import queue
+import threading
 import uvicorn
 import base64
 import io
@@ -76,16 +82,145 @@ class TokenizeRequest(BaseModel):
     text: str
     voice: str = "af_heart"
 
+# Job status enum
+class JobStatusEnum(str, Enum):
+    QUEUED = "queued"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+# Job models - ADD THE MISSING TTSJobRequest MODEL
+class TTSJobRequest(BaseModel):
+    text: str
+    voice: Optional[str] = None
+    speed: float = 1.0
+    use_gpu: bool = True
+    breathiness: float = 0.0
+    tenseness: float = 0.0
+    jitter: float = 0.0
+    sultry: float = 0.0
+    fiction: bool = False
+    # Metadata
+    title: str = "Untitled"
+    author: str = "Unknown Author"
+    genre: str = "non-fiction"
+
+class TTSJob(BaseModel):
+    id: str
+    text: str
+    voice: Optional[str] = None
+    speed: float = 1.0
+    use_gpu: bool = True
+    breathiness: float = 0.0
+    tenseness: float = 0.0
+    jitter: float = 0.0
+    sultry: float = 0.0
+    fiction: bool = False
+    # Metadata
+    title: str = "Untitled"
+    author: str = "Unknown Author"
+    genre: str = "non-fiction"
+
+class JobResponse(BaseModel):
+    job_id: str
+    status: JobStatusEnum
+    message: str
+
+class JobStatus(BaseModel):
+    job_id: str
+    status: JobStatusEnum
+    title: str
+    author: str
+    genre: str
+    position_in_queue: Optional[int] = None
+    total_in_queue: int
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+    audio_base64: Optional[str] = None
+
+class QueueStatus(BaseModel):
+    total_jobs: int
+    processing_jobs: int
+    queued_jobs: int
+    jobs: List[JobStatus]
+
+# Global job storage and queue
+jobs_storage: Dict[str, JobStatus] = {}
+job_queue = queue.Queue()
+processing_jobs: Dict[str, JobStatus] = {}
+
+# Queue processor (runs in background thread)
+def process_queue():
+    """Background thread that processes the job queue"""
+    while True:
+        try:
+            job: TTSJob = job_queue.get(timeout=1)
+            job_id = job.id
+            if job_id in jobs_storage:
+                jobs_storage[job_id].status = JobStatusEnum.PROCESSING
+                jobs_storage[job_id].started_at = datetime.now()
+                processing_jobs[job_id] = jobs_storage[job_id]
+                print(f"🔄 Processing job {job_id}: {job.title}")
+                try:
+                    selected_voice, emotion_preset = select_voice_and_preset(job.voice, job.fiction)
+                    speed = emotion_preset.get("speed", job.speed) if emotion_preset and job.speed == 1.0 else job.speed
+                    breathiness = emotion_preset.get("breathiness", job.breathiness) if emotion_preset and job.breathiness == 0.0 else job.breathiness
+                    tenseness = emotion_preset.get("tenseness", job.tenseness) if emotion_preset and job.tenseness == 0.0 else job.tenseness
+                    jitter = emotion_preset.get("jitter", job.jitter) if emotion_preset and job.jitter == 0.0 else job.jitter
+                    sultry = emotion_preset.get("sultry", job.sultry) if emotion_preset and job.sultry == 0.0 else job.sultry
+                    preprocessed_text = preprocess_text(job.text)
+                    (sample_rate, audio_data), phonemes = generate_audio(
+                        preprocessed_text,
+                        selected_voice,
+                        speed,
+                        job.use_gpu,
+                        breathiness,
+                        tenseness,
+                        jitter,
+                        sultry
+                    )
+                    if audio_data is None:
+                        raise Exception("Failed to generate audio")
+                    import wave, io, base64, numpy as np
+                    audio_buffer = io.BytesIO()
+                    channels = 1
+                    sampwidth = 2
+                    with wave.open(audio_buffer, 'wb') as wav_file:
+                        wav_file.setnchannels(channels)
+                        wav_file.setsampwidth(sampwidth)
+                        wav_file.setframerate(sample_rate)
+                        scaled = np.clip(audio_data, -1.0, 1.0)
+                        scaled = (scaled * 32767).astype(np.int16)
+                        wav_file.writeframes(scaled.tobytes())
+                    audio_buffer.seek(0)
+                    audio_base64 = base64.b64encode(audio_buffer.read()).decode('utf-8')
+                    jobs_storage[job_id].status = JobStatusEnum.COMPLETED
+                    jobs_storage[job_id].completed_at = datetime.now()
+                    jobs_storage[job_id].audio_base64 = audio_base64
+                    print(f"✅ Completed job {job_id}: {job.title}")
+                except Exception as e:
+                    jobs_storage[job_id].status = JobStatusEnum.FAILED
+                    jobs_storage[job_id].error_message = str(e)
+                    print(f"❌ Failed job {job_id}: {str(e)}")
+                finally:
+                    if job_id in processing_jobs:
+                        del processing_jobs[job_id]
+                    job_queue.task_done()
+        except queue.Empty:
+            continue
+        except Exception as e:
+            print(f"❌ Queue processor error: {str(e)}")
+
+queue_thread = threading.Thread(target=process_queue, daemon=True)
+queue_thread.start()
+
 # Text preprocessing function
 def preprocess_text(text):
     """Preprocess text to handle paragraph flow properly"""
-    # Strip whitespace
     text = text.strip()
-    
-    # Replace single newlines with spaces (preserve paragraph flow)
-    # This keeps double newlines (actual paragraph breaks) intact
     text = re.sub(r'([^\n])\n([^\n])', r'\1 \2', text)
-    
     return text
 
 # Helper function to select voice based on fiction parameter
@@ -96,9 +231,7 @@ def select_voice_and_preset(requested_voice, is_fiction):
     
     # Default voices with emotion presets
     if is_fiction:
-        # Voice for literature: Bella with emotion settings
         voice_id = "af_bella"  # 🇺🇸 🚺 Bella 🔥
-        # Literature preset emotions
         emotion_preset = {
             "speed": 1,
             "breathiness": 0.0,
@@ -107,9 +240,7 @@ def select_voice_and_preset(requested_voice, is_fiction):
             "sultry": 0.0
         }
     else:
-        # Voice for articles: Sky with emotion settings
         voice_id = "af_sky"  # 🇺🇸 🚺 Sky
-        # Articles preset emotions
         emotion_preset = {
             "speed": 1,
             "breathiness": 0.0,
@@ -119,7 +250,6 @@ def select_voice_and_preset(requested_voice, is_fiction):
         }
         
     return voice_id, emotion_preset
-        
 
 # Core TTS functionality from original app.py
 def forward_gpu(ps, ref_s, speed):
@@ -132,7 +262,6 @@ def generate_audio(text, voice='af_heart', speed=1, use_gpu=CUDA_AVAILABLE,
     pack = pipeline.load_voice(voice)
     use_gpu = use_gpu and CUDA_AVAILABLE
     
-    # Collect all audio chunks and phoneme strings
     all_audio_chunks = []
     all_phonemes = []
     
@@ -144,30 +273,24 @@ def generate_audio(text, voice='af_heart', speed=1, use_gpu=CUDA_AVAILABLE,
             else:
                 audio = models[False](ps, ref_s, speed)
                 
-            # Apply emotion effects
             audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
                 
         except Exception as e:
             if use_gpu:
-                # Fallback to CPU
                 audio = models[False](ps, ref_s, speed)
-                # Apply emotion effects
                 audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
             else:
                 raise HTTPException(status_code=500, detail=str(e))
         
-        # Add this chunk to our collection
         all_audio_chunks.append(audio.numpy())
         all_phonemes.append(ps)
     
     if not all_audio_chunks:
         return None, ''
     
-    # Combine all audio chunks into a single numpy array
     combined_audio = np.concatenate(all_audio_chunks)
     combined_phonemes = '\n'.join(all_phonemes)
     
-    # Return the combined audio
     return (24000, combined_audio), combined_phonemes
 
 def tokenize_text(text, voice='af_heart'):
@@ -195,18 +318,13 @@ async def list_voices():
 
 @app.post("/tts")
 async def text_to_speech(request: TTSRequest):
-    """
-    Convert text to speech and return audio as WAV file
-    """
+    """Convert text to speech and return audio as WAV file"""
     try:
-        # Select voice and emotion preset based on fiction parameter
-        selected_voice, emotion_preset = select_voice(request.voice, request.fiction)
+        selected_voice, emotion_preset = select_voice_and_preset(request.voice, request.fiction)
 
-        # Validate voice
         if selected_voice not in VOICES:
             raise HTTPException(status_code=400, detail=f"Voice '{selected_voice}' not found. Available voices: {list(VOICES)}")
 
-        # Apply emotion presets if available and not overridden
         speed = request.speed
         breathiness = request.breathiness
         tenseness = request.tenseness
@@ -224,13 +342,11 @@ async def text_to_speech(request: TTSRequest):
             if request.sultry == 0.0 and "sultry" in emotion_preset:
                 sultry = emotion_preset["sultry"]
 
-        # Preprocess text for better paragraph handling
         preprocessed_text = preprocess_text(request.text)
 
-        # Generate audio
         (sample_rate, audio_data), phonemes = generate_audio(
             preprocessed_text, 
-            selected_voice,  # Use the selected voice here
+            selected_voice,
             speed, 
             request.use_gpu,
             breathiness,
@@ -242,33 +358,24 @@ async def text_to_speech(request: TTSRequest):
         if audio_data is None:
             raise HTTPException(status_code=500, detail="Failed to generate audio")
         
-        # Convert to WAV format without scipy
-        # Create a WAV file in memory using wave module from standard library
         import wave
         import struct
         
-        # Create an in-memory file-like object
         audio_buffer = io.BytesIO()
+        channels = 1
+        sampwidth = 2
         
-        # Sample rate, channels, sample width, etc.
-        channels = 1  # Mono audio
-        sampwidth = 2  # 16-bit audio
-        
-        # Create the WAV file
         with wave.open(audio_buffer, 'wb') as wav_file:
             wav_file.setnchannels(channels)
             wav_file.setsampwidth(sampwidth)
             wav_file.setframerate(sample_rate)
             
-            # Convert audio_data to 16-bit integers and write to the WAV file
-            # Scale and convert to 16-bit PCM
             scaled = np.clip(audio_data, -1.0, 1.0)
             scaled = (scaled * 32767).astype(np.int16)
             wav_file.writeframes(scaled.tobytes())
         
         audio_buffer.seek(0)
         
-        # Return the audio as a streaming response
         return StreamingResponse(
             audio_buffer, 
             media_type="audio/wav",
@@ -283,19 +390,13 @@ async def text_to_speech(request: TTSRequest):
 
 @app.post("/tts/base64")
 async def text_to_speech_base64(request: TTSRequest):
-    """
-    Convert text to speech and return audio as base64 encoded string
-    (easier for mobile apps to handle)
-    """
+    """Convert text to speech and return audio as base64 encoded string"""
     try:
-        # Select voice and emotion preset based on fiction parameter
-        selected_voice, emotion_preset = select_voice(request.voice, request.fiction)
+        selected_voice, emotion_preset = select_voice_and_preset(request.voice, request.fiction)
         
-        # Validate voice
         if selected_voice not in VOICES:
             raise HTTPException(status_code=400, detail=f"Voice '{selected_voice}' not found. Available voices: {list(VOICES)}")
         
-        # Apply emotion presets if available and not overridden
         speed = request.speed
         breathiness = request.breathiness
         tenseness = request.tenseness
@@ -313,13 +414,11 @@ async def text_to_speech_base64(request: TTSRequest):
             if request.sultry == 0.0 and "sultry" in emotion_preset:
                 sultry = emotion_preset["sultry"]
 
-        # Preprocess text for better paragraph handling
         preprocessed_text = preprocess_text(request.text)
         
-        # Generate audio
         (sample_rate, audio_data), phonemes = generate_audio(
             preprocessed_text, 
-            selected_voice,  # Use the selected voice here
+            selected_voice,
             speed, 
             request.use_gpu,
             breathiness,
@@ -331,33 +430,24 @@ async def text_to_speech_base64(request: TTSRequest):
         if audio_data is None:
             raise HTTPException(status_code=500, detail="Failed to generate audio")
         
-        # Convert to WAV format without scipy
-        # Create a WAV file in memory using wave module from standard library
         import wave
         import struct
         
-        # Create an in-memory file-like object
         audio_buffer = io.BytesIO()
+        channels = 1
+        sampwidth = 2
         
-        # Sample rate, channels, sample width, etc.
-        channels = 1  # Mono audio
-        sampwidth = 2  # 16-bit audio
-        
-        # Create the WAV file
         with wave.open(audio_buffer, 'wb') as wav_file:
             wav_file.setnchannels(channels)
             wav_file.setsampwidth(sampwidth)
             wav_file.setframerate(sample_rate)
             
-            # Convert audio_data to 16-bit integers and write to the WAV file
-            # Scale and convert to 16-bit PCM
             scaled = np.clip(audio_data, -1.0, 1.0)
             scaled = (scaled * 32767).astype(np.int16)
             wav_file.writeframes(scaled.tobytes())
         
         audio_buffer.seek(0)
         
-        # Encode as base64
         audio_base64 = base64.b64encode(audio_buffer.read()).decode('utf-8')
         
         return {
@@ -368,17 +458,14 @@ async def text_to_speech_base64(request: TTSRequest):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/tokenize")
 async def tokenize(request: TokenizeRequest):
-    """
-    Tokenize text to phonemes without generating audio
-    """
+    """Tokenize text to phonemes without generating audio"""
     try:
-        # Validate voice
         if request.voice not in VOICES:
             raise HTTPException(status_code=400, detail=f"Voice '{request.voice}' not found. Available voices: {list(VOICES)}")
         
-        # Tokenize text
         phonemes = tokenize_text(request.text, request.voice)
         
         return {
@@ -387,6 +474,105 @@ async def tokenize(request: TokenizeRequest):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# FIXED: Now accepts TTSJobRequest and creates TTSJob internally
+@app.post("/tts/submit", response_model=JobResponse)
+async def submit_tts_job(job_request: TTSJobRequest):
+    """Submit a TTS job to the processing queue"""
+    try:
+        print(f"📥 Received job submission request:")
+        print(f"  Title: {job_request.title}")
+        print(f"  Author: {job_request.author}")
+        print(f"  Genre: {job_request.genre}")
+        print(f"  Fiction: {job_request.fiction}")
+        print(f"  Text length: {len(job_request.text)}")
+        
+        job_id = str(uuid.uuid4())
+        
+        # Create TTSJob from TTSJobRequest
+        job_data = TTSJob(
+            id=job_id,
+            text=job_request.text,
+            voice=job_request.voice,
+            speed=job_request.speed,
+            use_gpu=job_request.use_gpu,
+            breathiness=job_request.breathiness,
+            tenseness=job_request.tenseness,
+            jitter=job_request.jitter,
+            sultry=job_request.sultry,
+            fiction=job_request.fiction,
+            title=job_request.title,
+            author=job_request.author,
+            genre=job_request.genre
+        )
+        
+        job_status = JobStatus(
+            job_id=job_id,
+            status=JobStatusEnum.QUEUED,
+            title=job_request.title,
+            author=job_request.author,
+            genre=job_request.genre,
+            total_in_queue=job_queue.qsize() + 1,
+            created_at=datetime.now()
+        )
+        
+        jobs_storage[job_id] = job_status
+        job_queue.put(job_data)
+        
+        print(f"📋 Queued job {job_id}: {job_request.title}")
+        print(f"📊 Queue size now: {job_queue.qsize()}")
+        print(f"📊 Total jobs in storage: {len(jobs_storage)}")
+        
+        return JobResponse(
+            job_id=job_id,
+            status=JobStatusEnum.QUEUED,
+            message=f"Job queued successfully. Position: {job_queue.qsize()}"
+        )
+    except Exception as e:
+        print(f"❌ Submit job error: {str(e)}")
+        import traceback
+        print(f"❌ Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/tts/status/{job_id}", response_model=JobStatus)
+async def get_job_status(job_id: str):
+    if job_id not in jobs_storage:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job_status = jobs_storage[job_id]
+    if job_status.status == JobStatusEnum.QUEUED:
+        job_status.position_in_queue = max(1, job_queue.qsize())
+    job_status.total_in_queue = len(jobs_storage)
+    return job_status
+
+@app.get("/tts/queue", response_model=QueueStatus)
+async def get_queue_status():
+    queued_count = sum(1 for job in jobs_storage.values() if job.status == JobStatusEnum.QUEUED)
+    processing_count = len(processing_jobs)
+    
+    print(f"📊 Queue status requested:")
+    print(f"  Total jobs: {len(jobs_storage)}")
+    print(f"  Processing: {processing_count}")
+    print(f"  Queued: {queued_count}")
+    print(f"  Jobs: {[f'{job.job_id[:8]}:{job.status}:{job.title}' for job in jobs_storage.values()]}")
+    
+    return QueueStatus(
+        total_jobs=len(jobs_storage),
+        processing_jobs=processing_count,
+        queued_jobs=queued_count,
+        jobs=list(jobs_storage.values())
+    )
+
+@app.delete("/tts/job/{job_id}")
+async def cancel_job(job_id: str):
+    if job_id not in jobs_storage:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job_status = jobs_storage[job_id]
+    if job_status.status == JobStatusEnum.PROCESSING:
+        raise HTTPException(status_code=400, detail="Cannot cancel job that is currently processing")
+    if job_status.status == JobStatusEnum.QUEUED:
+        del jobs_storage[job_id]
+        return {"message": "Job cancelled successfully"}
+    return {"message": "Job already completed or failed"}
 
 if __name__ == "__main__":
     uvicorn.run("api:app", host="0.0.0.0", port=8080, reload=False)

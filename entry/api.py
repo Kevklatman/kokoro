@@ -267,10 +267,13 @@ def preprocess_text(text):
 
 # Helper function to select voice and preset by name
 
-def select_voice_and_preset(requested_voice, preset_name=None):
+def select_voice_and_preset(requested_voice, preset_name=None, fiction=None):
     """
-    Select voice and emotion preset.
-    If preset_name is given and valid, use preset. Otherwise, use requested_voice (or default).
+    Select voice and emotion preset for TTS.
+    Priority:
+      1. If preset_name is given and valid, use preset (voice and params).
+      2. If requested_voice is given, use it with no preset.
+      3. If neither is given, use Bella for fiction, Sky for non-fiction (official presets).
     Returns (voice_id, emotion_preset_dict or None)
     """
     if preset_name and preset_name in VOICE_PRESETS:
@@ -284,8 +287,22 @@ def select_voice_and_preset(requested_voice, preset_name=None):
         }
     if requested_voice is not None:
         return requested_voice, None
+    # Automatic mapping: Bella for fiction, Sky for non-fiction
+    if fiction is not None:
+        if fiction:
+            preset = VOICE_PRESETS['literature']
+        else:
+            preset = VOICE_PRESETS['articles']
+        return preset['voice'], {
+            'speed': preset.get('speed', 1.0),
+            'breathiness': preset.get('breathiness', 0.0),
+            'tenseness': preset.get('tenseness', 0.0),
+            'jitter': preset.get('jitter', 0.0),
+            'sultry': preset.get('sultry', 0.0)
+        }
     # Fallback: default
     return 'af_heart', None
+
 
 # Core TTS functionality from original app.py
 def forward_gpu(ps, ref_s, speed):
@@ -377,11 +394,11 @@ async def list_choices():
 
 @app.post("/tts")
 async def text_to_speech(request: TTSRequest):
-    """Convert text to speech and return audio as WAV file. Supports voice presets."""
+    """Convert text to speech and return audio as WAV file. Supports presets and auto-mapping fiction/non-fiction."""
     try:
         # Support for presets: if request has 'preset' field, use it
         preset_name = getattr(request, 'preset', None) if hasattr(request, 'preset') else None
-        selected_voice, emotion_preset = select_voice_and_preset(request.voice, preset_name)
+        selected_voice, emotion_preset = select_voice_and_preset(request.voice, preset_name, fiction=getattr(request, 'fiction', None))
 
         if selected_voice not in VOICES:
             raise HTTPException(status_code=400, detail=f"Voice '{selected_voice}' not found. Available voices: {list(VOICES)}")

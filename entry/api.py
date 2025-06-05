@@ -334,19 +334,19 @@ def select_voice_and_preset(requested_voice, preset_name=None, fiction=None):
             # Literature: Bella preset (override everything)
             return 'af_bella', {
                 'speed': 1.1,
-                'breathiness': 0.1,
-                'tenseness': 0.1,
-                'jitter': 0.15,
-                'sultry': 0.1
+                'breathiness': 0,
+                'tenseness': 0,
+                'jitter': 0,
+                'sultry': 0
             }
         else:
             # Articles: Sky preset (override everything)
             return 'af_sky', {
                 'speed': 1.0,
-                'breathiness': 0.15,
-                'tenseness': 0.5,
-                'jitter': 0.3,
-                'sultry': 0.1
+                'breathiness': 0,
+                'tenseness': 0,
+                'jitter': 0,
+                'sultry': 0
             }
     if preset_name and preset_name in VOICE_PRESETS:
         preset = VOICE_PRESETS[preset_name]

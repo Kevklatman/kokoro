@@ -2,6 +2,8 @@
 FROM python:3.10-slim
 
 # Set environment variables
+# Set environment variables for production
+ENV ENV=production
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
@@ -12,6 +14,10 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     build-essential \
     ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+    
+RUN apt-get update && apt-get install -y \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install them
@@ -26,4 +32,4 @@ COPY . .
 EXPOSE 8080
 
 # Start the FastAPI app with Uvicorn
-CMD ["uvicorn", "entry.api:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "entry.api:app", "--host", "127.0.0.1", "--port", "8080"]

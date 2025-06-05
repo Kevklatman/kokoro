@@ -20,6 +20,7 @@ from starlette.concurrency import run_in_threadpool
 from fastapi import Depends, Header
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
+from huggingface_hub import login
 
 
 # Import your existing TTS components
@@ -34,7 +35,9 @@ ENV = os.getenv("ENV", "development")
 API_KEY = os.getenv("API_KEY", "dev-secret-key")
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
 
-
+hf_token = os.environ.get("HF_TOKEN")
+if hf_token:
+    login(token=hf_token)
 
 # Create FastAPI app
 app = FastAPI(

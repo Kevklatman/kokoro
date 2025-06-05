@@ -137,7 +137,7 @@ def add_sultry(audio, amount=0.0):
         
     return result
 
-def apply_emotion_effects(audio, breathiness=0.1, tenseness=0.9, jitter=0.0, sultry=0.0):
+def apply_emotion_effects(audio, breathiness=0.0, tenseness=0.0, jitter=0.0, sultry=0.0):
     """Apply all emotion effects to audio"""
     # Convert to torch tensor if it's numpy
     is_numpy = isinstance(audio, np.ndarray)

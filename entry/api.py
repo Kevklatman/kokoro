@@ -1,7 +1,7 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Generator
 import re
 import uuid
 import time
@@ -14,6 +14,9 @@ import base64
 import io
 import numpy as np
 import torch
+import asyncio
+import os
+from starlette.concurrency import run_in_threadpool
 
 # Import your existing TTS components
 from kokoro import KModel, KPipeline
@@ -187,6 +190,29 @@ class QueueStatus(BaseModel):
     processing_jobs: int
     queued_jobs: int
     jobs: List[JobStatus]
+from pydantic import BaseModel
+from typing import List, Optional
+
+class TTSBatchRequest(BaseModel):
+    texts: List[str]
+    voice: Optional[str] = "af_heart"
+    speed: Optional[float] = 1.0
+    use_gpu: Optional[bool] = True
+    breathiness: Optional[float] = 0.0
+    tenseness: Optional[float] = 0.0
+    jitter: Optional[float] = 0.0
+    sultry: Optional[float] = 0.0
+
+
+class TTSBatchRequest(BaseModel):
+    texts: List[str]
+    voice: Optional[str] = "af_heart"
+    speed: Optional[float] = 1.0
+    use_gpu: Optional[bool] = True
+    breathiness: Optional[float] = 0.0
+    tenseness: Optional[float] = 0.0
+    jitter: Optional[float] = 0.0
+    sultry: Optional[float] = 0.0
 
 # Global job storage and queue
 jobs_storage: Dict[str, JobStatus] = {}
@@ -307,6 +333,57 @@ def select_voice_and_preset(requested_voice, preset_name=None, fiction=None):
 # Core TTS functionality from original app.py
 def forward_gpu(ps, ref_s, speed):
     return models[True](ps, ref_s, speed)
+
+def generate_audio_batch(
+    texts,
+    voice='af_heart',
+    speed=1,
+    use_gpu=CUDA_AVAILABLE,
+    breathiness=0.0,
+    tenseness=0.0,
+    jitter=0.0,
+    sultry=0.0
+):
+    """
+    Batch version: Generate audio for a list of texts efficiently using model batch support.
+    Returns: list of ((sample_rate, audio_data), phonemes)
+    """
+    pipeline = pipelines[voice[0]]
+    pack = pipeline.load_voice(voice)
+    use_gpu = use_gpu and CUDA_AVAILABLE
+
+    # Tokenize all texts in batch
+    batch_ps = []
+    batch_ref_s = []
+    for text in texts:
+        for _, ps, _ in pipeline(text, voice, speed):
+            batch_ps.append(ps)
+            batch_ref_s.append(pack[len(ps)-1])
+    if not batch_ps:
+        return []
+
+    # Pad sequences to the same length
+    import torch
+    from torch.nn.utils.rnn import pad_sequence
+    ps_tensors = [torch.tensor(ps, dtype=torch.long) for ps in batch_ps]
+    ref_s_tensors = [torch.tensor(ref, dtype=torch.float32) for ref in batch_ref_s]
+    ps_batch = pad_sequence(ps_tensors, batch_first=True)
+    ref_s_batch = pad_sequence(ref_s_tensors, batch_first=True)
+
+    # Forward batch through model
+    if use_gpu:
+        ps_batch = ps_batch.cuda()
+        ref_s_batch = ref_s_batch.cuda()
+    model = models[use_gpu]
+    audio_batch, pred_dur_batch = model.forward_with_tokens(ps_batch, ref_s_batch, speed)
+    audio_batch = audio_batch.cpu().numpy() if use_gpu else audio_batch.numpy()
+
+    # Post-process outputs
+    results = []
+    for idx, audio in enumerate(audio_batch):
+        audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
+        results.append(((24000, audio), batch_ps[idx]))
+    return results
 
 def generate_audio(text, voice='af_heart', speed=1, use_gpu=CUDA_AVAILABLE, 
                    breathiness=0.0, tenseness=0.0, jitter=0.0, sultry=0.0):
@@ -448,6 +525,43 @@ async def text_to_speech(request: TTSRequest):
             wav_file.writeframes(scaled.tobytes())
         audio_buffer.seek(0)
         return StreamingResponse(audio_buffer, media_type="audio/wav")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/tts/batch")
+async def batch_text_to_speech(request: TTSBatchRequest):
+    """
+    Convert a batch of texts to speech and return a list of base64-encoded audio strings.
+    """
+    try:
+        results = generate_audio_batch(
+            request.texts,
+            voice=request.voice,
+            speed=request.speed,
+            use_gpu=request.use_gpu,
+            breathiness=request.breathiness,
+            tenseness=request.tenseness,
+            jitter=request.jitter,
+            sultry=request.sultry
+        )
+        # Encode each audio result as base64 wav
+        import io, wave, numpy as np, base64
+        audio_base64_list = []
+        for (sample_rate, audio_data), phonemes in results:
+            audio_buffer = io.BytesIO()
+            channels = 1
+            sampwidth = 2
+            with wave.open(audio_buffer, 'wb') as wav_file:
+                wav_file.setnchannels(channels)
+                wav_file.setsampwidth(sampwidth)
+                wav_file.setframerate(sample_rate)
+                scaled = np.clip(audio_data, -1.0, 1.0)
+                scaled = (scaled * 32767).astype(np.int16)
+                wav_file.writeframes(scaled.tobytes())
+            audio_buffer.seek(0)
+            audio_base64 = base64.b64encode(audio_buffer.read()).decode('utf-8')
+            audio_base64_list.append(audio_base64)
+        return {"audios": audio_base64_list}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -637,5 +751,160 @@ async def cancel_job(job_id: str):
         return {"message": "Job cancelled successfully"}
     return {"message": "Job already completed or failed"}
 
+# HLS Streaming Support
+@app.post("/tts/stream")
+async def stream_tts(request: TTSRequest, background_tasks: BackgroundTasks):
+    """Stream audio as it's being generated using HLS"""
+    try:
+        # Create a unique ID for this streaming session
+        stream_id = str(uuid.uuid4())
+        stream_dir = f"streams/{stream_id}"
+        os.makedirs(stream_dir, exist_ok=True)
+        
+        # Create initial playlist file
+        playlist_path = f"{stream_dir}/playlist.m3u8"
+        with open(playlist_path, "w") as f:
+            f.write("#EXTM3U\n")
+            f.write("#EXT-X-VERSION:3\n")
+            f.write("#EXT-X-TARGETDURATION:2\n")
+            f.write("#EXT-X-MEDIA-SEQUENCE:0\n")
+        
+        # Start audio generation in background
+        background_tasks.add_task(
+            generate_streaming_audio,
+            request.text,
+            stream_id,
+            request.voice,
+            request.speed,
+            request.use_gpu,
+            request.breathiness,
+            request.tenseness,
+            request.jitter,
+            request.sultry,
+            request.fiction
+        )
+        
+        # Return the stream URL
+        base_url = "http://localhost:8080"  # Update this for production
+        stream_url = f"{base_url}/streams/{stream_id}/playlist.m3u8"
+        return {"stream_url": stream_url, "stream_id": stream_id}
+    except Exception as e:
+        print(f"❌ Streaming error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Serve stream files
+@app.get("/streams/{stream_id}/{file_name}")
+async def get_stream_file(stream_id: str, file_name: str):
+    """Serve HLS stream files"""
+    file_path = f"streams/{stream_id}/{file_name}"
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Stream file not found")
+    
+    # For m3u8 playlists
+    if file_name.endswith(".m3u8"):
+        with open(file_path, "r") as f:
+            content = f.read()
+        return Response(content=content, media_type="application/vnd.apple.mpegurl")
+    
+    # For TS segments
+    elif file_name.endswith(".ts"):
+        return StreamingResponse(
+            io.open(file_path, "rb"),
+            media_type="video/mp2t"
+        )
+    
+    raise HTTPException(status_code=400, detail="Invalid stream file type")
+
+# Function to generate streaming audio
+async def generate_streaming_audio(
+    text: str, 
+    stream_id: str,
+    voice: Optional[str] = None,
+    speed: float = 1.0,
+    use_gpu: bool = CUDA_AVAILABLE,
+    breathiness: float = 0.0,
+    tenseness: float = 0.0,
+    jitter: float = 0.0,
+    sultry: float = 0.0,
+    fiction: bool = False
+):
+    """Generate audio in chunks and create HLS stream"""
+    try:
+        # Process text into sentences or paragraphs
+        text_chunks = preprocess_text(text).split('\n\n')
+        
+        # Select voice based on fiction parameter if not specified
+        voice_id, preset = select_voice_and_preset(voice, fiction=fiction)
+        
+        # Create stream directory
+        stream_dir = f"streams/{stream_id}"
+        
+        # Initialize HLS playlist
+        segment_duration = 2  # seconds
+        sample_rate = 24000
+        
+        # Process each chunk
+        segment_index = 0
+        for i, chunk in enumerate(text_chunks):
+            if not chunk.strip():
+                continue
+                
+            # Generate audio for this chunk
+            audio_data = await run_in_threadpool(
+                lambda: generate_audio(
+                    chunk, 
+                    voice_id, 
+                    speed, 
+                    use_gpu, 
+                    breathiness, 
+                    tenseness, 
+                    jitter, 
+                    sultry
+                )
+            )
+            
+            # Convert to WAV format
+            audio_array = np.frombuffer(audio_data, dtype=np.int16)
+            
+            # Split into segments of segment_duration
+            samples_per_segment = int(segment_duration * sample_rate)
+            for j in range(0, len(audio_array), samples_per_segment):
+                segment = audio_array[j:j+samples_per_segment]
+                
+                # Pad last segment if needed
+                if len(segment) < samples_per_segment:
+                    segment = np.pad(segment, (0, samples_per_segment - len(segment)))
+                
+                # Save segment as TS file
+                segment_file = f"{stream_dir}/segment_{segment_index}.ts"
+                
+                # Convert to bytes and save
+                segment_bytes = segment.tobytes()
+                with open(segment_file, "wb") as f:
+                    f.write(segment_bytes)
+                
+                # Update playlist
+                with open(f"{stream_dir}/playlist.m3u8", "a") as f:
+                    f.write(f"#EXTINF:{segment_duration},\n")
+                    f.write(f"segment_{segment_index}.ts\n")
+                
+                segment_index += 1
+                
+                # Small delay to simulate real-time generation
+                await asyncio.sleep(0.1)
+        
+        # Mark the end of the playlist
+        with open(f"{stream_dir}/playlist.m3u8", "a") as f:
+            f.write("#EXT-X-ENDLIST\n")
+            
+        print(f"✅ Completed streaming audio generation for {stream_id}")
+    except Exception as e:
+        print(f"❌ Error generating streaming audio: {str(e)}")
+        import traceback
+        print(f"❌ Traceback: {traceback.format_exc()}")
+
 if __name__ == "__main__":
+    # Create streams directory if it doesn't exist
+    os.makedirs("streams", exist_ok=True)
     uvicorn.run("api:app", host="0.0.0.0", port=8080, reload=False)

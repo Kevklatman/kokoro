@@ -20,8 +20,7 @@ from starlette.concurrency import run_in_threadpool
 
 # Import your existing TTS components
 from kokoro import KModel, KPipeline
-from audio_effects import apply_emotion_effects
-
+from entry.audio_effects import apply_emotion_effects
 # Initialize models and pipelines
 CUDA_AVAILABLE = torch.cuda.is_available()
 models = {gpu: KModel().to('cuda' if gpu else 'cpu').eval() for gpu in [False] + ([True] if CUDA_AVAILABLE else [])}

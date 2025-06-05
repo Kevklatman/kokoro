@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 
-def add_breathiness(audio, amount=0.4):
+def add_breathiness(audio, amount=0.0):
     """Add breathiness by mixing in filtered noise"""
     if amount <= 0:
         return audio
@@ -31,7 +31,7 @@ def add_tenseness(audio, amount=0.0):
     # Soft clipping function
     return torch.tanh(audio_amplified) / gain
 
-def add_jitter(audio, amount=0.3):
+def add_jitter(audio, amount=0.0):
     """Add jitter by slightly deforming time and amplitude"""
     if amount <= 0:
         return audio

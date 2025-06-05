@@ -145,7 +145,7 @@ class TTSRequest(BaseModel):
 
 class TokenizeRequest(BaseModel):
     text: str
-    voice: str = "af_heart"
+    voice: str = "af_sky"
 
 # --- Example: protect endpoints with API key ---
 # from fastapi import Depends
@@ -221,7 +221,7 @@ from typing import List, Optional
 
 class TTSBatchRequest(BaseModel):
     texts: List[str]
-    voice: Optional[str] = "af_heart"
+    voice: Optional[str] = "af_sky"
     speed: Optional[float] = 1.0
     use_gpu: Optional[bool] = True
     breathiness: Optional[float] = 0.0
@@ -232,7 +232,7 @@ class TTSBatchRequest(BaseModel):
 
 class TTSBatchRequest(BaseModel):
     texts: List[str]
-    voice: Optional[str] = "af_heart"
+    voice: Optional[str] = "af_sky"
     speed: Optional[float] = 1.0
     use_gpu: Optional[bool] = True
     breathiness: Optional[float] = 0.0
@@ -328,6 +328,26 @@ def select_voice_and_preset(requested_voice, preset_name=None, fiction=None):
       3. If neither is given, use Bella for fiction, Sky for non-fiction (official presets).
     Returns (voice_id, emotion_preset_dict or None)
     """
+    # ENFORCE: Always use preset values for literature (fiction) and articles (non-fiction)
+    if fiction is not None:
+        if fiction:
+            # Literature: Bella preset (override everything)
+            return 'af_bella', {
+                'speed': 1.1,
+                'breathiness': 0.1,
+                'tenseness': 0.1,
+                'jitter': 0.15,
+                'sultry': 0.1
+            }
+        else:
+            # Articles: Sky preset (override everything)
+            return 'af_sky', {
+                'speed': 1.0,
+                'breathiness': 0.15,
+                'tenseness': 0.5,
+                'jitter': 0.3,
+                'sultry': 0.1
+            }
     if preset_name and preset_name in VOICE_PRESETS:
         preset = VOICE_PRESETS[preset_name]
         return preset['voice'], {
@@ -337,23 +357,10 @@ def select_voice_and_preset(requested_voice, preset_name=None, fiction=None):
             'jitter': preset.get('jitter', 0.0),
             'sultry': preset.get('sultry', 0.0)
         }
-    if requested_voice is not None:
+    if requested_voice:
         return requested_voice, None
-    # Automatic mapping: Bella for fiction, Sky for non-fiction
-    if fiction is not None:
-        if fiction:
-            preset = VOICE_PRESETS['literature']
-        else:
-            preset = VOICE_PRESETS['articles']
-        return preset['voice'], {
-            'speed': preset.get('speed', 1.0),
-            'breathiness': preset.get('breathiness', 0.0),
-            'tenseness': preset.get('tenseness', 0.0),
-            'jitter': preset.get('jitter', 0.0),
-            'sultry': preset.get('sultry', 0.0)
-        }
     # Fallback: default
-    return 'af_heart', None
+    return 'af_sky', None
 
 
 # Core TTS functionality from original app.py
@@ -362,7 +369,7 @@ def forward_gpu(ps, ref_s, speed):
 
 def generate_audio_batch(
     texts,
-    voice='af_heart',
+    voice='af_sky',
     speed=1,
     use_gpu=CUDA_AVAILABLE,
     breathiness=0.0,
@@ -411,7 +418,7 @@ def generate_audio_batch(
         results.append(((24000, audio), batch_ps[idx]))
     return results
 
-def generate_audio(text, voice='af_heart', speed=1, use_gpu=CUDA_AVAILABLE, 
+def generate_audio(text, voice='af_sky', speed=1, use_gpu=CUDA_AVAILABLE, 
                    breathiness=0.0, tenseness=0.0, jitter=0.0, sultry=0.0):
     """Core function that generates audio from text"""
     pipeline = pipelines[voice[0]]
@@ -449,7 +456,7 @@ def generate_audio(text, voice='af_heart', speed=1, use_gpu=CUDA_AVAILABLE,
     
     return (24000, combined_audio), combined_phonemes
 
-def tokenize_text(text, voice='af_heart'):
+def tokenize_text(text, voice='af_sky'):
     """Tokenize text to phonemes without generating audio"""
     pipeline = pipelines[voice[0]]
     result_phonemes = []
@@ -506,29 +513,26 @@ async def text_to_speech(request: TTSRequest):
         if selected_voice not in VOICES:
             raise HTTPException(status_code=400, detail=f"Voice '{selected_voice}' not found. Available voices: {list(VOICES)}")
 
-        speed = request.speed
-        breathiness = request.breathiness
-        tenseness = request.tenseness
-        jitter = request.jitter
-        sultry = request.sultry
+        # ENFORCE: If emotion_preset is set (literature/articles), override all emotion parameters
         if emotion_preset:
-            if request.speed == 1.0 and "speed" in emotion_preset:
-                speed = emotion_preset["speed"]
-            if request.breathiness == 0.0 and "breathiness" in emotion_preset:
-                breathiness = emotion_preset["breathiness"]
-            if request.tenseness == 0.0 and "tenseness" in emotion_preset:
-                tenseness = emotion_preset["tenseness"]
-            if request.jitter == 0.0 and "jitter" in emotion_preset:
-                jitter = emotion_preset["jitter"]
-            if request.sultry == 0.0 and "sultry" in emotion_preset:
-                sultry = emotion_preset["sultry"]
+            speed = emotion_preset['speed']
+            breathiness = emotion_preset['breathiness']
+            tenseness = emotion_preset['tenseness']
+            jitter = emotion_preset['jitter']
+            sultry = emotion_preset['sultry']
+        else:
+            speed = request.speed
+            breathiness = request.breathiness
+            tenseness = request.tenseness
+            jitter = request.jitter
+            sultry = request.sultry
 
         preprocessed_text = preprocess_text(request.text)
 
         (sample_rate, audio_data), phonemes = generate_audio(
-            preprocessed_text, 
+            preprocessed_text,
             selected_voice,
-            speed, 
+            speed,
             request.use_gpu,
             breathiness,
             tenseness,
@@ -560,20 +564,47 @@ async def batch_text_to_speech(request: TTSBatchRequest):
     Convert a batch of texts to speech and return a list of base64-encoded audio strings.
     """
     try:
-        results = generate_audio_batch(
-            request.texts,
-            voice=request.voice,
-            speed=request.speed,
-            use_gpu=request.use_gpu,
-            breathiness=request.breathiness,
-            tenseness=request.tenseness,
-            jitter=request.jitter,
-            sultry=request.sultry
-        )
+        # ENFORCE: Always use preset values for literature (fiction) and articles (non-fiction)
+        # Check if request has 'fiction' attribute (should be a list matching texts)
+        fiction_list = getattr(request, 'fiction', None)
+        # If not present, treat as all non-fiction (Sky)
+        if fiction_list is None:
+            fiction_list = [False] * len(request.texts)
+        # For each text, select the preset and override all parameters
+        results = []
+        for idx, text in enumerate(request.texts):
+            is_fiction = fiction_list[idx] if idx < len(fiction_list) else False
+            if is_fiction:
+                # Bella preset
+                voice = 'af_bella'
+                speed = 1.1
+                breathiness = 0.1
+                tenseness = 0.1
+                jitter = 0.15
+                sultry = 0.1
+            else:
+                # Sky preset
+                voice = 'af_sky'
+                speed = 1.0
+                breathiness = 0.15
+                tenseness = 0.5
+                jitter = 0.3
+                sultry = 0.1
+            (sample_rate, audio_data), _ = generate_audio(
+                text,
+                voice,
+                speed,
+                request.use_gpu,
+                breathiness,
+                tenseness,
+                jitter,
+                sultry
+            )
+            results.append(((sample_rate, audio_data), None))
         # Encode each audio result as base64 wav
         import io, wave, numpy as np, base64
         audio_base64_list = []
-        for (sample_rate, audio_data), phonemes in results:
+        for (sample_rate, audio_data), _ in results:
             audio_buffer = io.BytesIO()
             channels = 1
             sampwidth = 2

@@ -17,10 +17,43 @@ import torch
 import asyncio
 import os
 from starlette.concurrency import run_in_threadpool
+from fastapi import Depends, Header
+from dotenv import load_dotenv
+from fastapi.middleware.cors import CORSMiddleware
+
 
 # Import your existing TTS components
 from kokoro import KModel, KPipeline
 from entry.audio_effects import apply_emotion_effects
+
+
+
+load_dotenv()  # Loads from .env if present
+
+ENV = os.getenv("ENV", "development")
+API_KEY = os.getenv("API_KEY", "dev-secret-key")
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
+
+
+
+# Create FastAPI app
+app = FastAPI(
+    title="Kokoro TTS API",
+    description="REST API for Kokoro Text-to-Speech Engine",
+    version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+
+
 # Initialize models and pipelines
 CUDA_AVAILABLE = torch.cuda.is_available()
 models = {gpu: KModel().to('cuda' if gpu else 'cpu').eval() for gpu in [False] + ([True] if CUDA_AVAILABLE else [])}
@@ -90,34 +123,16 @@ for voice in VOICES:
 
 VOICES = available_voices  # Update the VOICES set to only include successfully loaded voices
 
-# Create FastAPI app
-app = FastAPI(
-    title="Kokoro TTS API",
-    description="REST API for Kokoro Text-to-Speech Engine",
-    version="1.0.0"
-)
+
 
 # --- Environment-based configuration for CORS and API key ---
-import os
-from dotenv import load_dotenv
-from fastapi.middleware.cors import CORSMiddleware
 
-load_dotenv()  # Loads from .env if present
 
-ENV = os.getenv("ENV", "development")
-API_KEY = os.getenv("API_KEY", "dev-secret-key")
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+
 
 # --- API Key authentication dependency ---
-from fastapi import Depends, Header
 
 def get_api_key():
     return API_KEY

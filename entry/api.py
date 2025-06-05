@@ -98,15 +98,35 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Enable CORS
+# --- Environment-based configuration for CORS and API key ---
+import os
+from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
+
+load_dotenv()  # Loads from .env if present
+
+ENV = os.getenv("ENV", "development")
+API_KEY = os.getenv("API_KEY", "dev-secret-key")
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- API Key authentication dependency ---
+from fastapi import Depends, Header
+
+def get_api_key():
+    return API_KEY
+
+async def verify_api_key(x_api_key: str = Header(...)):
+    if x_api_key != API_KEY:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="Invalid API Key")
 
 # Input models for API requests
 class PreprocessRequest(BaseModel):
@@ -126,6 +146,12 @@ class TTSRequest(BaseModel):
 class TokenizeRequest(BaseModel):
     text: str
     voice: str = "af_heart"
+
+# --- Example: protect endpoints with API key ---
+# from fastapi import Depends
+# @app.post("/synthesize")
+# async def synthesize(request: TTSRequest, api_key: str = Depends(verify_api_key)):
+#     ...
 
 # Job status enum
 class JobStatusEnum(str, Enum):

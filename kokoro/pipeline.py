@@ -68,7 +68,8 @@ class KPipeline:
         model: Union[KModel, bool] = True,
         trf: bool = False,
         en_callable: Optional[Callable[[str], str]] = None,
-        device: Optional[str] = None
+        device: Optional[str] = None,
+        models_dir: Optional[str] = None
     ):
         """Initialize a KPipeline.
         
@@ -89,6 +90,23 @@ class KPipeline:
         assert lang_code in LANG_CODES, (lang_code, LANG_CODES)
         self.lang_code = lang_code
         self.model = None
+        
+        # Set models directory path
+        self.models_dir = models_dir
+        if self.models_dir is None:
+            # Try to find models directory in common locations
+            possible_dirs = [
+                os.path.join(os.getcwd(), 'models'),
+                '/app/models',
+                os.path.join(os.path.dirname(__file__), '..', 'models')
+            ]
+            for dir_path in possible_dirs:
+                if os.path.exists(dir_path) and os.path.isdir(dir_path):
+                    self.models_dir = dir_path
+                    logger.info(f"Found models directory at: {self.models_dir}")
+                    break
+            if self.models_dir is None:
+                logger.warning("Could not find models directory, will download models from Hugging Face")
         if isinstance(model, KModel):
             self.model = model
         elif model:
@@ -146,10 +164,41 @@ class KPipeline:
     def load_single_voice(self, voice: str):
         if voice in self.voices:
             return self.voices[voice]
+            
         if voice.endswith('.pt'):
             f = voice
         else:
-            f = hf_hub_download(repo_id=self.repo_id, filename=f'voices/{voice}.pt')
+            # First check if we have a models directory set
+            f = None
+            if self.models_dir:
+                voice_path = os.path.join(self.models_dir, 'voices', f'{voice}.pt')
+                if os.path.exists(voice_path):
+                    logger.info(f"Loading voice from models directory: {voice_path}")
+                    f = voice_path
+            
+            # If not found in models_dir, check other common locations
+            if f is None:
+                possible_paths = [
+                    os.path.join(os.getcwd(), 'models', 'voices', f'{voice}.pt'),  # Current working directory
+                    os.path.join('/app/models/voices', f'{voice}.pt'),               # Docker container path
+                    os.path.join(os.path.dirname(__file__), '..', 'models', 'voices', f'{voice}.pt')  # Relative to module
+                ]
+                
+                for path in possible_paths:
+                    if os.path.exists(path):
+                        logger.info(f"Loading voice from local path: {path}")
+                        f = path
+                        break
+                        
+            # If still not found, download from Hugging Face
+            if f is None:
+                logger.info(f"Voice not found locally, downloading from Hugging Face: {voice}")
+                try:
+                    f = hf_hub_download(repo_id=self.repo_id, filename=f'voices/{voice}.pt')
+                except Exception as e:
+                    logger.error(f"Failed to download voice {voice}: {str(e)}")
+                    raise
+                
             if not voice.startswith(self.lang_code):
                 v = LANG_CODES.get(voice, voice)
                 p = LANG_CODES.get(self.lang_code, self.lang_code)

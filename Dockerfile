@@ -26,9 +26,9 @@ COPY requirements.txt .
 RUN pip3 install --upgrade pip
 RUN pip3 install -r requirements.txt
 
-# Copy model download script and download models
-COPY download_models.py .
-RUN python3 download_models.py
+# Copy models
+COPY models .
+
 
 # Copy your code
 COPY . .

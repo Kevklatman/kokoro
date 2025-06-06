@@ -26,8 +26,8 @@ COPY requirements.txt .
 RUN pip3 install --upgrade pip
 RUN pip3 install -r requirements.txt
 
-# Copy models
-COPY models .
+# Copy models directory with proper structure
+COPY models/ /app/models/
 
 
 # Copy your code

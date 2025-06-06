@@ -59,8 +59,16 @@ app.add_middleware(
 
 # Initialize models and pipelines
 CUDA_AVAILABLE = torch.cuda.is_available()
+# Define models directory path
+MODELS_DIR = os.path.join(os.getcwd(), 'models')
+if not os.path.exists(MODELS_DIR) and os.path.exists('/app/models'):
+    MODELS_DIR = '/app/models'
+
+print(f"Using models directory: {MODELS_DIR}")
+
+# Initialize models and pipelines
 models = {gpu: KModel().to('cuda' if gpu else 'cpu').eval() for gpu in [False] + ([True] if CUDA_AVAILABLE else [])}
-pipelines = {lang_code: KPipeline(lang_code=lang_code, model=False) for lang_code in 'ab'}
+pipelines = {lang_code: KPipeline(lang_code=lang_code, model=False, models_dir=MODELS_DIR) for lang_code in 'ab'}
 pipelines['a'].g2p.lexicon.golds['kokoro'] = 'kˈOkəɹO'
 pipelines['b'].g2p.lexicon.golds['kokoro'] = 'kˈQkəɹQ'
 
@@ -79,14 +87,6 @@ CHOICES = {
     '🇺🇸 🚺 River': 'af_river',
     '🇺🇸 🚹 Michael': 'am_michael',
     '🇺🇸 🚹 Fenrir': 'am_fenrir',
-    '🇺🇸 🚹 Nolan': 'am_nolan',
-    '🇺🇸 🚹 Kevin': 'am_kevin',
-    '🇺🇸 🚹 Josh': 'am_josh',
-    '🇺🇸 🚹 Adam': 'am_adam',
-    '🇬🇧 🚺 Ruby': 'bf_ruby',
-    '🇬🇧 🚺 Selene': 'bf_selene',
-    '🇬🇧 🚹 Michael': 'bm_michael',
-    '🇬🇧 🚹 Kevin': 'bm_kevin',
     '🇬🇧 🚹 Daniel': 'bm_daniel',
 }
 

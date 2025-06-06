@@ -859,7 +859,7 @@ async def stream_tts(request: TTSRequest, background_tasks: BackgroundTasks):
         )
         
         # Return the stream URL
-        base_url = "http://localhost:8080"  # Update this for production
+        base_url = str(request.base_url).rstrip('/')
         stream_url = f"{base_url}/streams/{stream_id}/playlist.m3u8"
         return {"stream_url": stream_url, "stream_id": stream_id}
     except Exception as e:

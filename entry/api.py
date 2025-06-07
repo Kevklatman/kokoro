@@ -433,31 +433,46 @@ def generate_audio_batch(
     for idx, audio in enumerate(audio_batch):
         audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
         results.append(((24000, audio), batch_ps[idx]))
+    total_time = time.time() - start_time
+    print(f"⏱️ Total TTS generation time: {total_time:.3f}s for {len(text.split())} words ({len(text.split()) / total_time:.1f} words/sec)")
     return results
 
 def generate_audio(text, voice='af_sky', speed=1, use_gpu=CUDA_AVAILABLE, 
                    breathiness=0.0, tenseness=0.0, jitter=0.0, sultry=0.0):
     """Core function that generates audio from text with batch processing for better performance"""
+    import time
+    start_time = time.time()
+    
+    print(f"⏱️ Starting TTS for text of length {len(text)} chars ({len(text.split())} words)")
+    
+    # Step 1: Initialize pipeline and load voice
+    step1_start = time.time()
     pipeline = pipelines[voice[0]]
     pack = pipeline.load_voice(voice)
     use_gpu = use_gpu and CUDA_AVAILABLE
     model = models[use_gpu]
+    print(f"⏱️ Step 1: Pipeline and voice initialization took {time.time() - step1_start:.3f}s (GPU: {use_gpu})")
     
-    # Process all text chunks at once to prepare batch
+    # Step 2: Process all text chunks at once to prepare batch
+    step2_start = time.time()
     batch_ps = []
     batch_ref_s = []
     phoneme_groups = []
     
-    # Collect all phonemes and reference styles
+    # Step 3: Collect all phonemes and reference styles
+    step3_start = time.time()
+    print(f"⏱️ Step 2: Batch preparation took {time.time() - step2_start:.3f}s")
     for _, ps, _ in pipeline(text, voice, speed):
         batch_ps.append(ps)
         batch_ref_s.append(pack[len(ps)-1])
         phoneme_groups.append(ps)
+    print(f"⏱️ Step 3: Phoneme processing took {time.time() - step3_start:.3f}s")
     
     if not batch_ps:
         return None, ''
     
-    # Process in batches of up to 8 chunks for memory efficiency
+    # Step 4: Process in batches of up to 8 chunks for memory efficiency
+    step4_start = time.time()
     BATCH_SIZE = 8
     all_audio_chunks = []
     
@@ -475,18 +490,29 @@ def generate_audio(text, voice='af_sky', speed=1, use_gpu=CUDA_AVAILABLE,
         ref_s_batch = pad_sequence(ref_s_tensors, batch_first=True)
         
         # Process batch
+        batch_start = time.time()
         try:
             if use_gpu:
                 ps_batch = ps_batch.cuda()
                 ref_s_batch = ref_s_batch.cuda()
             
+            # Time the actual model inference
+            inference_start = time.time()
             audio_batch, _ = model.forward_with_tokens(ps_batch, ref_s_batch, speed)
+            inference_time = time.time() - inference_start
+            print(f"⏱️ Batch {i//BATCH_SIZE+1}: Model inference took {inference_time:.3f}s")
+            
             audio_batch = audio_batch.cpu().numpy() if use_gpu else audio_batch.numpy()
             
+            # Time the post-processing of audio
+            post_process_start = time.time()
             # Apply effects and collect results
             for audio in audio_batch:
                 audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
                 all_audio_chunks.append(audio)
+            post_process_time = time.time() - post_process_start
+            print(f"⏱️ Batch {i//BATCH_SIZE+1}: Post-processing took {post_process_time:.3f}s")
+        
                 
         except Exception as e:
             print(f"Batch processing failed: {str(e)}. Falling back to individual processing.")
@@ -500,8 +526,13 @@ def generate_audio(text, voice='af_sky', speed=1, use_gpu=CUDA_AVAILABLE,
                     print(f"Individual processing failed: {str(inner_e)}")
                     raise HTTPException(status_code=500, detail=str(inner_e))
     
+    # Step 5: Combine audio chunks
+    step5_start = time.time()
+    print(f"⏱️ Step 4: Model inference and batch processing took {time.time() - step4_start:.3f}s")
+    
     combined_audio = np.concatenate(all_audio_chunks)
     combined_phonemes = '\n'.join(phoneme_groups)
+    print(f"⏱️ Step 5: Audio combination took {time.time() - step5_start:.3f}s")
     
     return (24000, combined_audio), combined_phonemes
 

@@ -437,39 +437,71 @@ def generate_audio_batch(
 
 def generate_audio(text, voice='af_sky', speed=1, use_gpu=CUDA_AVAILABLE, 
                    breathiness=0.0, tenseness=0.0, jitter=0.0, sultry=0.0):
-    """Core function that generates audio from text"""
+    """Core function that generates audio from text with batch processing for better performance"""
     pipeline = pipelines[voice[0]]
     pack = pipeline.load_voice(voice)
     use_gpu = use_gpu and CUDA_AVAILABLE
+    model = models[use_gpu]
     
-    all_audio_chunks = []
-    all_phonemes = []
+    # Process all text chunks at once to prepare batch
+    batch_ps = []
+    batch_ref_s = []
+    phoneme_groups = []
     
+    # Collect all phonemes and reference styles
     for _, ps, _ in pipeline(text, voice, speed):
-        ref_s = pack[len(ps)-1]
-        try:
-            if use_gpu:
-                audio = forward_gpu(ps, ref_s, speed)
-            else:
-                audio = models[False](ps, ref_s, speed)
-                
-            audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
-                
-        except Exception as e:
-            if use_gpu:
-                audio = models[False](ps, ref_s, speed)
-                audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
-            else:
-                raise HTTPException(status_code=500, detail=str(e))
-        
-        all_audio_chunks.append(audio.numpy())
-        all_phonemes.append(ps)
+        batch_ps.append(ps)
+        batch_ref_s.append(pack[len(ps)-1])
+        phoneme_groups.append(ps)
     
-    if not all_audio_chunks:
+    if not batch_ps:
         return None, ''
     
+    # Process in batches of up to 8 chunks for memory efficiency
+    BATCH_SIZE = 8
+    all_audio_chunks = []
+    
+    for i in range(0, len(batch_ps), BATCH_SIZE):
+        batch_slice = slice(i, min(i + BATCH_SIZE, len(batch_ps)))
+        current_ps = batch_ps[batch_slice]
+        current_ref_s = batch_ref_s[batch_slice]
+        
+        # Convert to tensors and pad to same length
+        import torch
+        from torch.nn.utils.rnn import pad_sequence
+        ps_tensors = [torch.tensor(ps, dtype=torch.long) for ps in current_ps]
+        ref_s_tensors = [torch.tensor(ref, dtype=torch.float32) for ref in current_ref_s]
+        ps_batch = pad_sequence(ps_tensors, batch_first=True)
+        ref_s_batch = pad_sequence(ref_s_tensors, batch_first=True)
+        
+        # Process batch
+        try:
+            if use_gpu:
+                ps_batch = ps_batch.cuda()
+                ref_s_batch = ref_s_batch.cuda()
+            
+            audio_batch, _ = model.forward_with_tokens(ps_batch, ref_s_batch, speed)
+            audio_batch = audio_batch.cpu().numpy() if use_gpu else audio_batch.numpy()
+            
+            # Apply effects and collect results
+            for audio in audio_batch:
+                audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
+                all_audio_chunks.append(audio)
+                
+        except Exception as e:
+            print(f"Batch processing failed: {str(e)}. Falling back to individual processing.")
+            # Fall back to individual processing
+            for ps, ref_s in zip(current_ps, current_ref_s):
+                try:
+                    audio = models[False](ps, ref_s, speed)
+                    audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
+                    all_audio_chunks.append(audio.numpy())
+                except Exception as inner_e:
+                    print(f"Individual processing failed: {str(inner_e)}")
+                    raise HTTPException(status_code=500, detail=str(inner_e))
+    
     combined_audio = np.concatenate(all_audio_chunks)
-    combined_phonemes = '\n'.join(all_phonemes)
+    combined_phonemes = '\n'.join(phoneme_groups)
     
     return (24000, combined_audio), combined_phonemes
 
@@ -903,7 +935,7 @@ async def generate_streaming_audio(
     sultry: float = 0.0,
     fiction: bool = False
 ):
-    """Generate audio in chunks and create HLS stream"""
+    """Generate audio in chunks and create HLS stream with optimized processing"""
     try:
         # Process text into sentences or paragraphs
         text_chunks = preprocess_text(text).split('\n\n')
@@ -918,55 +950,78 @@ async def generate_streaming_audio(
         segment_duration = 2  # seconds
         sample_rate = 24000
         
-        # Process each chunk
+        # Prepare the playlist header
+        with open(f"{stream_dir}/playlist.m3u8", "w") as f:
+            f.write("#EXTM3U\n")
+            f.write("#EXT-X-VERSION:3\n")
+            f.write(f"#EXT-X-TARGETDURATION:{segment_duration}\n")
+            f.write("#EXT-X-MEDIA-SEQUENCE:0\n")
+        
+        # Batch process chunks for better performance
+        # Process in batches of 3 chunks at a time
+        BATCH_SIZE = 3
         segment_index = 0
-        for i, chunk in enumerate(text_chunks):
-            if not chunk.strip():
+        
+        for i in range(0, len(text_chunks), BATCH_SIZE):
+            batch_chunks = [chunk for chunk in text_chunks[i:i+BATCH_SIZE] if chunk.strip()]
+            if not batch_chunks:
                 continue
-                
-            # Generate audio for this chunk
-            audio_data = await run_in_threadpool(
-                lambda: generate_audio(
-                    chunk, 
-                    voice_id, 
-                    speed, 
-                    use_gpu, 
-                    breathiness, 
-                    tenseness, 
-                    jitter, 
-                    sultry
+            
+            # Process batch in parallel
+            batch_results = []
+            for chunk in batch_chunks:
+                # Generate audio for this chunk - run in thread pool
+                audio_result = await run_in_threadpool(
+                    lambda c=chunk: generate_audio(
+                        c, 
+                        voice_id, 
+                        speed, 
+                        use_gpu, 
+                        breathiness, 
+                        tenseness, 
+                        jitter, 
+                        sultry
+                    )
                 )
-            )
+                if audio_result and audio_result[0]:
+                    batch_results.append(audio_result[0][1])  # Get the audio array
             
-            # Convert to WAV format
-            audio_array = np.frombuffer(audio_data, dtype=np.int16)
+            # Process each audio result and create segments
+            for audio_array in batch_results:
+                # Split into segments of segment_duration
+                samples_per_segment = int(segment_duration * sample_rate)
+                
+                # Process segments in chunks to avoid memory issues
+                for j in range(0, len(audio_array), samples_per_segment):
+                    segment = audio_array[j:j+samples_per_segment]
+                    
+                    # Pad last segment if needed
+                    if len(segment) < samples_per_segment:
+                        segment = np.pad(segment, (0, samples_per_segment - len(segment)))
+                    
+                    # Save segment as TS file
+                    segment_file = f"{stream_dir}/segment_{segment_index}.ts"
+                    
+                    # Convert to bytes and save
+                    segment_bytes = segment.tobytes()
+                    with open(segment_file, "wb") as f:
+                        f.write(segment_bytes)
+                    
+                    # Update playlist
+                    with open(f"{stream_dir}/playlist.m3u8", "a") as f:
+                        f.write(f"#EXTINF:{segment_duration},\n")
+                        f.write(f"segment_{segment_index}.ts\n")
+                    
+                    segment_index += 1
             
-            # Split into segments of segment_duration
-            samples_per_segment = int(segment_duration * sample_rate)
-            for j in range(0, len(audio_array), samples_per_segment):
-                segment = audio_array[j:j+samples_per_segment]
+            # Update playlist after each batch is processed
+            # This allows clients to start playing while the rest is being generated
+            with open(f"{stream_dir}/playlist.m3u8", "a") as f:
+                f.write("#EXT-X-DISCONTINUITY\n")  # Mark potential discontinuity between batches
                 
-                # Pad last segment if needed
-                if len(segment) < samples_per_segment:
-                    segment = np.pad(segment, (0, samples_per_segment - len(segment)))
-                
-                # Save segment as TS file
-                segment_file = f"{stream_dir}/segment_{segment_index}.ts"
-                
-                # Convert to bytes and save
-                segment_bytes = segment.tobytes()
-                with open(segment_file, "wb") as f:
-                    f.write(segment_bytes)
-                
-                # Update playlist
-                with open(f"{stream_dir}/playlist.m3u8", "a") as f:
-                    f.write(f"#EXTINF:{segment_duration},\n")
-                    f.write(f"segment_{segment_index}.ts\n")
-                
-                segment_index += 1
-                
-                # Small delay to simulate real-time generation
-                await asyncio.sleep(0.1)
+            # Small delay between batches to allow system resources to recover
+            # Reduced from 0.1s per segment to 0.05s per batch
+            await asyncio.sleep(0.05)
         
         # Mark the end of the playlist
         with open(f"{stream_dir}/playlist.m3u8", "a") as f:

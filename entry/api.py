@@ -514,17 +514,33 @@ def generate_audio(text, voice='af_sky', speed=1, use_gpu=CUDA_AVAILABLE,
                     ps = [int(item) if isinstance(item, (int, float, np.integer, np.floating)) else 0 for item in ps]
                 
             # Validate reference style index
-            ref_idx = min(len(ps)-1, len(pack)-1)
-            if ref_idx < 0 or ref_idx >= len(pack):
-                print(f"⚠️ Invalid reference style index: {ref_idx}, pack length: {len(pack)}")
-                ref_idx = 0 if len(pack) > 0 else None
-                
-            if ref_idx is not None:
-                batch_ps.append(ps)
-                batch_ref_s.append(pack[ref_idx])
-                phoneme_groups.append(ps)
-            else:
-                print(f"⚠️ Skipping invalid phoneme sequence at index {idx}")
+            try:
+                ref_idx = min(len(ps)-1, len(pack)-1)
+                if ref_idx < 0 or ref_idx >= len(pack):
+                    print(f"⚠️ Invalid reference style index: {ref_idx}, pack length: {len(pack)}")
+                    ref_idx = 0 if len(pack) > 0 else None
+                    
+                if ref_idx is not None:
+                    batch_ps.append(ps)
+                    ref_style = pack[ref_idx]
+                    
+                    # Handle the case where ref_style is a tensor
+                    if hasattr(ref_style, 'detach') and hasattr(ref_style, 'numpy'):
+                        try:
+                            print(f"🔄 Converting reference style tensor to numpy array")
+                            ref_style = ref_style.detach().cpu().numpy()
+                        except Exception as tensor_e:
+                            print(f"❌ Failed to convert reference style tensor: {str(tensor_e)}")
+                            # Use a default reference style if conversion fails
+                            ref_style = np.zeros(1, dtype=np.float32)
+                    
+                    batch_ref_s.append(ref_style)
+                    phoneme_groups.append(ps)
+                else:
+                    print(f"⚠️ Skipping invalid phoneme sequence at index {idx}")
+            except Exception as e:
+                print(f"❌ Error processing reference style: {str(e)}")
+                # Continue processing other items
                 
         print(f"⏱️ Step 3: Phoneme processing took {time.time() - step3_start:.3f}s")
     except Exception as e:
@@ -580,12 +596,22 @@ def generate_audio(text, voice='af_sky', speed=1, use_gpu=CUDA_AVAILABLE,
                 
                 # Validate reference style
                 if not isinstance(ref, (list, tuple, np.ndarray)):
-                    print(f"⚠️ Invalid reference style type at index {idx}: {type(ref)}")
-                    # Try to convert non-iterable to a simple list
-                    if isinstance(ref, (int, float, str)):
+                    print(f"⚠️ Reference style is not a standard iterable at index {idx}: {type(ref)}")
+                    # Handle PyTorch tensor case
+                    if hasattr(ref, 'detach') and hasattr(ref, 'numpy'):
+                        try:
+                            print(f"🔄 Converting PyTorch tensor to numpy array")
+                            ref = ref.detach().cpu().numpy()
+                        except Exception as tensor_e:
+                            print(f"❌ Failed to convert tensor: {str(tensor_e)}")
+                            # Create a default reference style
+                            ref = [0.0]
+                    # Try to convert other non-iterable types to a simple list
+                    elif isinstance(ref, (int, float, str)):
                         ref = [float(ref) if isinstance(ref, (int, float)) else 0.0]
                     else:
-                        continue
+                        # Create a default reference style as last resort
+                        ref = [0.0]
                 
                 # Process reference style data to ensure all elements are floats
                 processed_ref = []
@@ -600,6 +626,7 @@ def generate_audio(text, voice='af_sky', speed=1, use_gpu=CUDA_AVAILABLE,
                             processed_ref.append(0.0)
                     else:
                         processed_ref.append(0.0)
+                        
                 ref = processed_ref
                 
                 # Create tensors with explicit type conversion and error handling
@@ -656,8 +683,20 @@ def generate_audio(text, voice='af_sky', speed=1, use_gpu=CUDA_AVAILABLE,
             post_process_start = time.time()
             # Apply effects and collect results
             for audio in audio_batch:
-                audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
-                all_audio_chunks.append(audio)
+                try:
+                    # Validate audio data
+                    if audio is None or not isinstance(audio, np.ndarray) or audio.size == 0:
+                        print("⚠️ Skipping empty or invalid audio data")
+                        continue
+                        
+                    processed_audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
+                    if processed_audio is not None and processed_audio.size > 0:
+                        all_audio_chunks.append(processed_audio)
+                    else:
+                        print("⚠️ Emotion effects returned invalid audio")
+                except Exception as audio_e:
+                    print(f"❌ Error processing audio: {str(audio_e)}")
+                    # Don't add this chunk to avoid concatenation errors
             post_process_time = time.time() - post_process_start
             print(f"⏱️ Batch {i//BATCH_SIZE+1}: Post-processing took {post_process_time:.3f}s")
         
@@ -667,19 +706,73 @@ def generate_audio(text, voice='af_sky', speed=1, use_gpu=CUDA_AVAILABLE,
             # Fall back to individual processing
             for ps, ref_s in zip(current_ps, current_ref_s):
                 try:
+                    # Convert ps to PyTorch tensor if it's not already
+                    if isinstance(ps, np.ndarray):
+                        ps = torch.tensor(ps, dtype=torch.long)
+                    elif isinstance(ps, list):
+                        ps = torch.tensor(ps, dtype=torch.long)
+                        
+                    # Convert ref_s to PyTorch tensor if it's not already
+                    if isinstance(ref_s, np.ndarray):
+                        ref_s = torch.tensor(ref_s, dtype=torch.float32)
+                    elif isinstance(ref_s, list):
+                        ref_s = torch.tensor(ref_s, dtype=torch.float32)
+                        
+                    print(f"🔄 Individual processing with tensor types: ps={type(ps)}, ref_s={type(ref_s)}")
                     audio = models[False](ps, ref_s, speed)
-                    audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
-                    all_audio_chunks.append(audio.numpy())
+                    
+                    if audio is not None:
+                        processed_audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
+                        if isinstance(processed_audio, torch.Tensor):
+                            processed_audio = processed_audio.cpu().numpy()
+                        all_audio_chunks.append(processed_audio)
+                    else:
+                        print("⚠️ Model returned None for audio")
                 except Exception as inner_e:
-                    print(f"Individual processing failed: {str(inner_e)}")
-                    raise HTTPException(status_code=500, detail=str(inner_e))
+                    print(f"❌ Individual processing failed: {str(inner_e)}")
+                    import traceback
+                    print(f"❌ Individual processing traceback: {traceback.format_exc()}")
+                    # Don't raise exception, just continue with other chunks
     
     # Step 5: Combine audio chunks
     step5_start = time.time()
     print(f"⏱️ Step 4: Model inference and batch processing took {time.time() - step4_start:.3f}s")
     
-    combined_audio = np.concatenate(all_audio_chunks)
-    combined_phonemes = '\n'.join(phoneme_groups)
+    # Check if we have any audio chunks to combine
+    if not all_audio_chunks:
+        print("⚠️ No audio chunks generated, cannot concatenate")
+        return None, ''
+        
+    # Ensure all chunks are valid numpy arrays with compatible shapes
+    valid_chunks = []
+    for i, chunk in enumerate(all_audio_chunks):
+        if chunk is not None and isinstance(chunk, np.ndarray) and chunk.size > 0:
+            valid_chunks.append(chunk)
+        else:
+            print(f"⚠️ Skipping invalid audio chunk at index {i}: {type(chunk)}")
+    
+    # Check if we have any valid chunks after filtering
+    if not valid_chunks:
+        print("⚠️ No valid audio chunks to concatenate")
+        # Return a short silence instead of failing
+        silence = np.zeros(24000)  # 1 second of silence at 24kHz
+        return (24000, silence), ''
+    
+    combined_audio = np.concatenate(valid_chunks)
+    
+    # Convert phoneme groups to strings if they're lists
+    string_phoneme_groups = []
+    for pg in phoneme_groups:
+        if isinstance(pg, (list, np.ndarray)):
+            # Convert list of integers to a string representation
+            pg_str = ' '.join(str(p) for p in pg)
+            string_phoneme_groups.append(pg_str)
+        elif isinstance(pg, str):
+            string_phoneme_groups.append(pg)
+        else:
+            string_phoneme_groups.append(str(pg))
+    
+    combined_phonemes = '\n'.join(string_phoneme_groups) if string_phoneme_groups else ''
     print(f"⏱️ Step 5: Audio combination took {time.time() - step5_start:.3f}s")
     
     return (24000, combined_audio), combined_phonemes

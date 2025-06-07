@@ -445,13 +445,24 @@ def generate_audio(text, voice='af_sky', speed=1, use_gpu=CUDA_AVAILABLE,
     
     print(f"⏱️ Starting TTS for text of length {len(text)} chars ({len(text.split())} words)")
     
+    # Validate input text
+    if not text or not isinstance(text, str):
+        print(f"⚠️ Invalid text input: {type(text)}, content: {text}")
+        return None, ''
+    
     # Step 1: Initialize pipeline and load voice
     step1_start = time.time()
-    pipeline = pipelines[voice[0]]
-    pack = pipeline.load_voice(voice)
-    use_gpu = use_gpu and CUDA_AVAILABLE
-    model = models[use_gpu]
-    print(f"⏱️ Step 1: Pipeline and voice initialization took {time.time() - step1_start:.3f}s (GPU: {use_gpu})")
+    try:
+        pipeline = pipelines[voice[0]]
+        pack = pipeline.load_voice(voice)
+        use_gpu = use_gpu and CUDA_AVAILABLE
+        model = models[use_gpu]
+        print(f"⏱️ Step 1: Pipeline and voice initialization took {time.time() - step1_start:.3f}s (GPU: {use_gpu})")
+    except Exception as e:
+        print(f"❌ Error during pipeline initialization: {str(e)}")
+        import traceback
+        print(f"❌ Traceback: {traceback.format_exc()}")
+        return None, ''
     
     # Step 2: Process all text chunks at once to prepare batch
     step2_start = time.time()
@@ -462,11 +473,65 @@ def generate_audio(text, voice='af_sky', speed=1, use_gpu=CUDA_AVAILABLE,
     # Step 3: Collect all phonemes and reference styles
     step3_start = time.time()
     print(f"⏱️ Step 2: Batch preparation took {time.time() - step2_start:.3f}s")
-    for _, ps, _ in pipeline(text, voice, speed):
-        batch_ps.append(ps)
-        batch_ref_s.append(pack[len(ps)-1])
-        phoneme_groups.append(ps)
-    print(f"⏱️ Step 3: Phoneme processing took {time.time() - step3_start:.3f}s")
+    try:
+        # Wrap pipeline call in try/except to catch any errors
+        try:
+            pipeline_results = list(pipeline(text, voice, speed))
+            print(f"🔍 Pipeline returned {len(pipeline_results)} results")
+        except Exception as e:
+            print(f"❌ Pipeline error: {str(e)}")
+            import traceback
+            print(f"❌ Pipeline traceback: {traceback.format_exc()}")
+            # Try with a simpler approach - split text into words
+            print("🔄 Attempting fallback with simple text splitting")
+            words = text.split()
+            pipeline_results = []
+            for word in words:
+                try:
+                    word_results = list(pipeline(word, voice, speed))
+                    pipeline_results.extend(word_results)
+                except Exception as word_e:
+                    print(f"❌ Failed to process word '{word}': {str(word_e)}")
+        
+        if not pipeline_results:
+            print("⚠️ No results from pipeline, cannot proceed")
+            return None, ''
+            
+        for idx, (_, ps, _) in enumerate(pipeline_results):
+            # Debug phoneme sequence data type
+            print(f"🔍 Phoneme sequence {idx} type: {type(ps)}, length: {len(ps) if hasattr(ps, '__len__') else 'N/A'}")
+            
+            # Handle various data types for phoneme sequences
+            if isinstance(ps, str):
+                print(f"⚠️ Converting string phoneme sequence to integer list at index {idx}")
+                ps = [ord(c) for c in ps]  # Convert string to list of character codes
+            elif isinstance(ps, list) or isinstance(ps, tuple):
+                if any(isinstance(item, str) for item in ps):
+                    print(f"⚠️ Converting string items in phoneme sequence to integers at index {idx}")
+                    ps = [ord(c) if isinstance(c, str) else (int(c) if isinstance(c, (int, float)) else 0) for c in ps]
+                elif any(not isinstance(item, (int, float, np.integer, np.floating)) for item in ps):
+                    print(f"⚠️ Non-numeric items found in phoneme sequence at index {idx}")
+                    ps = [int(item) if isinstance(item, (int, float, np.integer, np.floating)) else 0 for item in ps]
+                
+            # Validate reference style index
+            ref_idx = min(len(ps)-1, len(pack)-1)
+            if ref_idx < 0 or ref_idx >= len(pack):
+                print(f"⚠️ Invalid reference style index: {ref_idx}, pack length: {len(pack)}")
+                ref_idx = 0 if len(pack) > 0 else None
+                
+            if ref_idx is not None:
+                batch_ps.append(ps)
+                batch_ref_s.append(pack[ref_idx])
+                phoneme_groups.append(ps)
+            else:
+                print(f"⚠️ Skipping invalid phoneme sequence at index {idx}")
+                
+        print(f"⏱️ Step 3: Phoneme processing took {time.time() - step3_start:.3f}s")
+    except Exception as e:
+        print(f"❌ Error during phoneme processing: {str(e)}")
+        import traceback
+        print(f"❌ Traceback: {traceback.format_exc()}")
+        return None, ''
     
     if not batch_ps:
         return None, ''
@@ -484,10 +549,93 @@ def generate_audio(text, voice='af_sky', speed=1, use_gpu=CUDA_AVAILABLE,
         # Convert to tensors and pad to same length
         import torch
         from torch.nn.utils.rnn import pad_sequence
-        ps_tensors = [torch.tensor(ps, dtype=torch.long) for ps in current_ps]
-        ref_s_tensors = [torch.tensor(ref, dtype=torch.float32) for ref in current_ref_s]
-        ps_batch = pad_sequence(ps_tensors, batch_first=True)
-        ref_s_batch = pad_sequence(ref_s_tensors, batch_first=True)
+        
+        # Debug and validate data before tensor conversion
+        ps_tensors = []
+        ref_s_tensors = []
+        
+        for idx, (ps, ref) in enumerate(zip(current_ps, current_ref_s)):
+            try:
+                # Validate phoneme sequence
+                if not isinstance(ps, (list, tuple, np.ndarray)):
+                    print(f"⚠️ Invalid phoneme sequence type at index {idx}: {type(ps)}")
+                    if isinstance(ps, str):
+                        # Convert string to list of character codes
+                        print(f"🔄 Converting string '{ps}' to character codes")
+                        ps = [ord(c) for c in ps]
+                    else:
+                        continue
+                    
+                # Check for string values in phoneme sequence and convert ALL data to integers
+                processed_ps = []
+                for item in ps:
+                    if isinstance(item, str):
+                        processed_ps.append(ord(item))
+                    elif isinstance(item, (int, float, np.integer, np.floating)):
+                        processed_ps.append(int(item))
+                    else:
+                        # Convert any other type to string then to character code
+                        processed_ps.append(ord(str(item)[0]) if str(item) else 0)
+                ps = processed_ps
+                
+                # Validate reference style
+                if not isinstance(ref, (list, tuple, np.ndarray)):
+                    print(f"⚠️ Invalid reference style type at index {idx}: {type(ref)}")
+                    # Try to convert non-iterable to a simple list
+                    if isinstance(ref, (int, float, str)):
+                        ref = [float(ref) if isinstance(ref, (int, float)) else 0.0]
+                    else:
+                        continue
+                
+                # Process reference style data to ensure all elements are floats
+                processed_ref = []
+                for item in ref:
+                    if isinstance(item, (int, float, np.integer, np.floating)):
+                        processed_ref.append(float(item))
+                    elif isinstance(item, str):
+                        # Try to convert string to float, use 0.0 if fails
+                        try:
+                            processed_ref.append(float(item))
+                        except ValueError:
+                            processed_ref.append(0.0)
+                    else:
+                        processed_ref.append(0.0)
+                ref = processed_ref
+                
+                # Create tensors with explicit type conversion and error handling
+                try:
+                    ps_tensor = torch.tensor(ps, dtype=torch.long)
+                    ref_tensor = torch.tensor(ref, dtype=torch.float32)
+                
+                    ps_tensors.append(ps_tensor)
+                    ref_s_tensors.append(ref_tensor)
+                    print(f"✅ Successfully created tensors for index {idx}")
+                except Exception as e:
+                    print(f"❌ Tensor creation failed: {str(e)}")
+                    # Last resort fallback - create empty tensors
+                    try:
+                        print("🔄 Attempting fallback with empty tensors")
+                        ps_tensors.append(torch.zeros(1, dtype=torch.long))
+                        ref_s_tensors.append(torch.zeros(1, dtype=torch.float32))
+                    except Exception as inner_e:
+                        print(f"❌ Even fallback failed: {str(inner_e)}")
+            except Exception as e:
+                print(f"❌ Error processing data at index {idx}: {str(e)}")
+                print(f"❌ PS data: {type(ps)}, content: {ps[:10] if hasattr(ps, '__getitem__') else ps}")
+                print(f"❌ Ref data: {type(ref)}, content: {ref[:10] if hasattr(ref, '__getitem__') else ref}")
+        # Check if we have valid tensors to process
+        if not ps_tensors or not ref_s_tensors:
+            print("⚠️ No valid tensors to process in this batch")
+            continue
+            
+        try:
+            ps_batch = pad_sequence(ps_tensors, batch_first=True)
+            ref_s_batch = pad_sequence(ref_s_tensors, batch_first=True)
+        except Exception as e:
+            print(f"❌ Error during sequence padding: {str(e)}")
+            import traceback
+            print(f"❌ Traceback: {traceback.format_exc()}")
+            continue
         
         # Process batch
         batch_start = time.time()

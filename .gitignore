@@ -130,6 +130,9 @@ celerybeat.pid
 # Environments
 .env
 .env.dev
+docker-compose.dev.yml
+Dockerfile.dev
+start-dev-server.sh
 .venv
 env/
 venv/

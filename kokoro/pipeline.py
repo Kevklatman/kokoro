@@ -1,9 +1,10 @@
 from .model import KModel
+from .g2p_cache import G2PCache
 from dataclasses import dataclass
 from huggingface_hub import hf_hub_download
 from loguru import logger
 from misaki import en, espeak
-from typing import Callable, Generator, List, Optional, Tuple, Union
+from typing import Callable, Generator, List, Optional, Tuple, Union, Any
 import re
 import torch
 import os
@@ -71,6 +72,8 @@ class KPipeline:
         device: Optional[str] = None,
         models_dir: Optional[str] = None
     ):
+        # Initialize phoneme cache for improved performance
+        self._phoneme_cache = {}
         """Initialize a KPipeline.
         
         Args:
@@ -138,28 +141,32 @@ class KPipeline:
                 logger.warning("EspeakFallback not Enabled: OOD words will be skipped")
                 logger.warning({str(e)})
                 fallback = None
-            self.g2p = en.G2P(trf=trf, british=lang_code=='b', fallback=fallback, unk='')
+            g2p_obj = en.G2P(trf=trf, british=lang_code=='b', fallback=fallback, unk='')
+            self.g2p = G2PCache(g2p_obj)
         elif lang_code == 'j':
             try:
                 from misaki import ja
-                self.g2p = ja.JAG2P()
+                g2p_obj = ja.JAG2P()
+                self.g2p = G2PCache(g2p_obj)
             except ImportError:
                 logger.error("You need to `pip install misaki[ja]` to use lang_code='j'")
                 raise
         elif lang_code == 'z':
             try:
                 from misaki import zh
-                self.g2p = zh.ZHG2P(
+                g2p_obj = zh.ZHG2P(
                     version=None if repo_id.endswith('/Kokoro-82M') else '1.1',
                     en_callable=en_callable
                 )
+                self.g2p = G2PCache(g2p_obj)
             except ImportError:
                 logger.error("You need to `pip install misaki[zh]` to use lang_code='z'")
                 raise
         else:
             language = LANG_CODES[lang_code]
             logger.warning(f"Using EspeakG2P(language='{language}'). Enhanced chunking logic is now implemented to handle longer texts, but splitting with '\\n' may still improve results.")
-            self.g2p = espeak.EspeakG2P(language=language)
+            g2p_obj = espeak.EspeakG2P(language=language)
+            self.g2p = G2PCache(g2p_obj)
 
     def load_single_voice(self, voice: str):
         if voice in self.voices:

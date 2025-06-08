@@ -1,0 +1,36 @@
+# Development Dockerfile for Kokoro
+FROM python:3.10-slim
+
+# Set environment variables for development
+ENV ENV=development
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PORT=8080
+
+# Set work directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    ffmpeg \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install them
+COPY requirements.txt .
+RUN pip3 install --upgrade pip
+RUN pip3 install -r requirements.txt
+
+# Copy models directory with proper structure
+COPY models/ /app/models/
+
+# Copy your code
+COPY . .
+
+# Expose port 8080 for development
+EXPOSE 8080
+
+# Start the FastAPI app with Uvicorn in development mode
+# Using 0.0.0.0 to allow connections from any IP address
+CMD uvicorn entry.main:app --host 0.0.0.0 --port ${PORT:-8080} --reload

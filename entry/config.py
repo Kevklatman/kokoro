@@ -39,6 +39,10 @@ class Settings:
         if not origins_str:
             return ["*"]  # Default to allow all origins
         
+        # Special case: if origins_str is exactly '*', allow all origins
+        if origins_str.strip() == "*":
+            return ["*"]
+            
         origins = [origin.strip() for origin in origins_str.split(",") if origin.strip()]
         return origins if origins else ["*"]
     

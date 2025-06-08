@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  kokoro-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount the code for hot-reloading
+      - ./entry:/app/entry
+      # Mount the models directory
+      - ./models:/app/models
+    environment:
+      - ENV=development
+      - ALLOWED_ORIGINS=*
+      - PORT=8080
+      - CUDA_AVAILABLE=False
+    env_file:
+      - .env.dev
+    # Use 0.0.0.0 to allow connections from any IP address
+    command: uvicorn entry.main:app --host 0.0.0.0 --port 8080 --reload

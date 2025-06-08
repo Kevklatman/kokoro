@@ -1,5 +1,6 @@
 from .istftnet import Decoder
 from .modules import CustomAlbert, ProsodyPredictor, TextEncoder
+from .cpu_optimizations import optimize_for_cpu
 from dataclasses import dataclass
 from huggingface_hub import hf_hub_download
 from loguru import logger
@@ -74,8 +75,10 @@ class KModel(torch.nn.Module):
                 state_dict = {k[7:]: v for k, v in state_dict.items()}
                 getattr(self, key).load_state_dict(state_dict, strict=False)
         
-        # We'll implement CPU optimizations in a safer way that avoids deepcopy issues
-        # For now, we'll only implement the caching mechanism which is the safest optimization
+        # Apply CPU optimizations if we're on CPU
+        if str(self.device) == 'cpu':
+            logger.info("Applying JIT compilation for CPU optimization")
+            optimize_for_cpu(self)
 
     @property
     def device(self):

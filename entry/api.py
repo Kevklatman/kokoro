@@ -433,347 +433,43 @@ def generate_audio_batch(
     for idx, audio in enumerate(audio_batch):
         audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
         results.append(((24000, audio), batch_ps[idx]))
-    total_time = time.time() - start_time
-    print(f"⏱️ Total TTS generation time: {total_time:.3f}s for {len(text.split())} words ({len(text.split()) / total_time:.1f} words/sec)")
     return results
 
 def generate_audio(text, voice='af_sky', speed=1, use_gpu=CUDA_AVAILABLE, 
                    breathiness=0.0, tenseness=0.0, jitter=0.0, sultry=0.0):
-    """Core function that generates audio from text with batch processing for better performance"""
-    import time
-    start_time = time.time()
+    """Core function that generates audio from text"""
+    pipeline = pipelines[voice[0]]
+    pack = pipeline.load_voice(voice)
+    use_gpu = use_gpu and CUDA_AVAILABLE
     
-    print(f"⏱️ Starting TTS for text of length {len(text)} chars ({len(text.split())} words)")
-    
-    # Validate input text
-    if not text or not isinstance(text, str):
-        print(f"⚠️ Invalid text input: {type(text)}, content: {text}")
-        return None, ''
-    
-    # Step 1: Initialize pipeline and load voice
-    step1_start = time.time()
-    try:
-        pipeline = pipelines[voice[0]]
-        pack = pipeline.load_voice(voice)
-        use_gpu = use_gpu and CUDA_AVAILABLE
-        model = models[use_gpu]
-        print(f"⏱️ Step 1: Pipeline and voice initialization took {time.time() - step1_start:.3f}s (GPU: {use_gpu})")
-    except Exception as e:
-        print(f"❌ Error during pipeline initialization: {str(e)}")
-        import traceback
-        print(f"❌ Traceback: {traceback.format_exc()}")
-        return None, ''
-    
-    # Step 2: Process all text chunks at once to prepare batch
-    step2_start = time.time()
-    batch_ps = []
-    batch_ref_s = []
-    phoneme_groups = []
-    
-    # Step 3: Collect all phonemes and reference styles
-    step3_start = time.time()
-    print(f"⏱️ Step 2: Batch preparation took {time.time() - step2_start:.3f}s")
-    try:
-        # Wrap pipeline call in try/except to catch any errors
-        try:
-            pipeline_results = list(pipeline(text, voice, speed))
-            print(f"🔍 Pipeline returned {len(pipeline_results)} results")
-        except Exception as e:
-            print(f"❌ Pipeline error: {str(e)}")
-            import traceback
-            print(f"❌ Pipeline traceback: {traceback.format_exc()}")
-            # Try with a simpler approach - split text into words
-            print("🔄 Attempting fallback with simple text splitting")
-            words = text.split()
-            pipeline_results = []
-            for word in words:
-                try:
-                    word_results = list(pipeline(word, voice, speed))
-                    pipeline_results.extend(word_results)
-                except Exception as word_e:
-                    print(f"❌ Failed to process word '{word}': {str(word_e)}")
-        
-        if not pipeline_results:
-            print("⚠️ No results from pipeline, cannot proceed")
-            return None, ''
-            
-        for idx, (_, ps, _) in enumerate(pipeline_results):
-            # Debug phoneme sequence data type
-            print(f"🔍 Phoneme sequence {idx} type: {type(ps)}, length: {len(ps) if hasattr(ps, '__len__') else 'N/A'}")
-            
-            # Handle various data types for phoneme sequences
-            if isinstance(ps, str):
-                print(f"⚠️ Converting string phoneme sequence to integer list at index {idx}")
-                ps = [ord(c) for c in ps]  # Convert string to list of character codes
-            elif isinstance(ps, list) or isinstance(ps, tuple):
-                if any(isinstance(item, str) for item in ps):
-                    print(f"⚠️ Converting string items in phoneme sequence to integers at index {idx}")
-                    ps = [ord(c) if isinstance(c, str) else (int(c) if isinstance(c, (int, float)) else 0) for c in ps]
-                elif any(not isinstance(item, (int, float, np.integer, np.floating)) for item in ps):
-                    print(f"⚠️ Non-numeric items found in phoneme sequence at index {idx}")
-                    ps = [int(item) if isinstance(item, (int, float, np.integer, np.floating)) else 0 for item in ps]
-                
-            # Validate reference style index
-            try:
-                ref_idx = min(len(ps)-1, len(pack)-1)
-                if ref_idx < 0 or ref_idx >= len(pack):
-                    print(f"⚠️ Invalid reference style index: {ref_idx}, pack length: {len(pack)}")
-                    ref_idx = 0 if len(pack) > 0 else None
-                    
-                if ref_idx is not None:
-                    batch_ps.append(ps)
-                    ref_style = pack[ref_idx]
-                    
-                    # Handle the case where ref_style is a tensor
-                    if hasattr(ref_style, 'detach') and hasattr(ref_style, 'numpy'):
-                        try:
-                            print(f"🔄 Converting reference style tensor to numpy array")
-                            ref_style = ref_style.detach().cpu().numpy()
-                        except Exception as tensor_e:
-                            print(f"❌ Failed to convert reference style tensor: {str(tensor_e)}")
-                            # Use a default reference style if conversion fails
-                            ref_style = np.zeros(1, dtype=np.float32)
-                    
-                    batch_ref_s.append(ref_style)
-                    phoneme_groups.append(ps)
-                else:
-                    print(f"⚠️ Skipping invalid phoneme sequence at index {idx}")
-            except Exception as e:
-                print(f"❌ Error processing reference style: {str(e)}")
-                # Continue processing other items
-                
-        print(f"⏱️ Step 3: Phoneme processing took {time.time() - step3_start:.3f}s")
-    except Exception as e:
-        print(f"❌ Error during phoneme processing: {str(e)}")
-        import traceback
-        print(f"❌ Traceback: {traceback.format_exc()}")
-        return None, ''
-    
-    if not batch_ps:
-        return None, ''
-    
-    # Step 4: Process in batches of up to 8 chunks for memory efficiency
-    step4_start = time.time()
-    BATCH_SIZE = 8
     all_audio_chunks = []
+    all_phonemes = []
     
-    for i in range(0, len(batch_ps), BATCH_SIZE):
-        batch_slice = slice(i, min(i + BATCH_SIZE, len(batch_ps)))
-        current_ps = batch_ps[batch_slice]
-        current_ref_s = batch_ref_s[batch_slice]
-        
-        # Convert to tensors and pad to same length
-        import torch
-        from torch.nn.utils.rnn import pad_sequence
-        
-        # Debug and validate data before tensor conversion
-        ps_tensors = []
-        ref_s_tensors = []
-        
-        for idx, (ps, ref) in enumerate(zip(current_ps, current_ref_s)):
-            try:
-                # Validate phoneme sequence
-                if not isinstance(ps, (list, tuple, np.ndarray)):
-                    print(f"⚠️ Invalid phoneme sequence type at index {idx}: {type(ps)}")
-                    if isinstance(ps, str):
-                        # Convert string to list of character codes
-                        print(f"🔄 Converting string '{ps}' to character codes")
-                        ps = [ord(c) for c in ps]
-                    else:
-                        continue
-                    
-                # Check for string values in phoneme sequence and convert ALL data to integers
-                processed_ps = []
-                for item in ps:
-                    if isinstance(item, str):
-                        processed_ps.append(ord(item))
-                    elif isinstance(item, (int, float, np.integer, np.floating)):
-                        processed_ps.append(int(item))
-                    else:
-                        # Convert any other type to string then to character code
-                        processed_ps.append(ord(str(item)[0]) if str(item) else 0)
-                ps = processed_ps
-                
-                # Validate reference style
-                if not isinstance(ref, (list, tuple, np.ndarray)):
-                    print(f"⚠️ Reference style is not a standard iterable at index {idx}: {type(ref)}")
-                    # Handle PyTorch tensor case
-                    if hasattr(ref, 'detach') and hasattr(ref, 'numpy'):
-                        try:
-                            print(f"🔄 Converting PyTorch tensor to numpy array")
-                            ref = ref.detach().cpu().numpy()
-                        except Exception as tensor_e:
-                            print(f"❌ Failed to convert tensor: {str(tensor_e)}")
-                            # Create a default reference style
-                            ref = [0.0]
-                    # Try to convert other non-iterable types to a simple list
-                    elif isinstance(ref, (int, float, str)):
-                        ref = [float(ref) if isinstance(ref, (int, float)) else 0.0]
-                    else:
-                        # Create a default reference style as last resort
-                        ref = [0.0]
-                
-                # Process reference style data to ensure all elements are floats
-                processed_ref = []
-                for item in ref:
-                    if isinstance(item, (int, float, np.integer, np.floating)):
-                        processed_ref.append(float(item))
-                    elif isinstance(item, str):
-                        # Try to convert string to float, use 0.0 if fails
-                        try:
-                            processed_ref.append(float(item))
-                        except ValueError:
-                            processed_ref.append(0.0)
-                    else:
-                        processed_ref.append(0.0)
-                        
-                ref = processed_ref
-                
-                # Create tensors with explicit type conversion and error handling
-                try:
-                    ps_tensor = torch.tensor(ps, dtype=torch.long)
-                    ref_tensor = torch.tensor(ref, dtype=torch.float32)
-                
-                    ps_tensors.append(ps_tensor)
-                    ref_s_tensors.append(ref_tensor)
-                    print(f"✅ Successfully created tensors for index {idx}")
-                except Exception as e:
-                    print(f"❌ Tensor creation failed: {str(e)}")
-                    # Last resort fallback - create empty tensors
-                    try:
-                        print("🔄 Attempting fallback with empty tensors")
-                        ps_tensors.append(torch.zeros(1, dtype=torch.long))
-                        ref_s_tensors.append(torch.zeros(1, dtype=torch.float32))
-                    except Exception as inner_e:
-                        print(f"❌ Even fallback failed: {str(inner_e)}")
-            except Exception as e:
-                print(f"❌ Error processing data at index {idx}: {str(e)}")
-                print(f"❌ PS data: {type(ps)}, content: {ps[:10] if hasattr(ps, '__getitem__') else ps}")
-                print(f"❌ Ref data: {type(ref)}, content: {ref[:10] if hasattr(ref, '__getitem__') else ref}")
-        # Check if we have valid tensors to process
-        if not ps_tensors or not ref_s_tensors:
-            print("⚠️ No valid tensors to process in this batch")
-            continue
-            
-        try:
-            ps_batch = pad_sequence(ps_tensors, batch_first=True)
-            ref_s_batch = pad_sequence(ref_s_tensors, batch_first=True)
-        except Exception as e:
-            print(f"❌ Error during sequence padding: {str(e)}")
-            import traceback
-            print(f"❌ Traceback: {traceback.format_exc()}")
-            continue
-        
-        # Process batch
-        batch_start = time.time()
+    for _, ps, _ in pipeline(text, voice, speed):
+        ref_s = pack[len(ps)-1]
         try:
             if use_gpu:
-                ps_batch = ps_batch.cuda()
-                ref_s_batch = ref_s_batch.cuda()
-            
-            # Time the actual model inference
-            inference_start = time.time()
-            audio_batch, _ = model.forward_with_tokens(ps_batch, ref_s_batch, speed)
-            inference_time = time.time() - inference_start
-            print(f"⏱️ Batch {i//BATCH_SIZE+1}: Model inference took {inference_time:.3f}s")
-            
-            audio_batch = audio_batch.cpu().numpy() if use_gpu else audio_batch.numpy()
-            
-            # Time the post-processing of audio
-            post_process_start = time.time()
-            # Apply effects and collect results
-            for audio in audio_batch:
-                try:
-                    # Validate audio data
-                    if audio is None or not isinstance(audio, np.ndarray) or audio.size == 0:
-                        print("⚠️ Skipping empty or invalid audio data")
-                        continue
-                        
-                    processed_audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
-                    if processed_audio is not None and processed_audio.size > 0:
-                        all_audio_chunks.append(processed_audio)
-                    else:
-                        print("⚠️ Emotion effects returned invalid audio")
-                except Exception as audio_e:
-                    print(f"❌ Error processing audio: {str(audio_e)}")
-                    # Don't add this chunk to avoid concatenation errors
-            post_process_time = time.time() - post_process_start
-            print(f"⏱️ Batch {i//BATCH_SIZE+1}: Post-processing took {post_process_time:.3f}s")
-        
+                audio = forward_gpu(ps, ref_s, speed)
+            else:
+                audio = models[False](ps, ref_s, speed)
+                
+            audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
                 
         except Exception as e:
-            print(f"Batch processing failed: {str(e)}. Falling back to individual processing.")
-            # Fall back to individual processing
-            for ps, ref_s in zip(current_ps, current_ref_s):
-                try:
-                    # Convert ps to PyTorch tensor if it's not already
-                    if isinstance(ps, np.ndarray):
-                        ps = torch.tensor(ps, dtype=torch.long)
-                    elif isinstance(ps, list):
-                        ps = torch.tensor(ps, dtype=torch.long)
-                        
-                    # Convert ref_s to PyTorch tensor if it's not already
-                    if isinstance(ref_s, np.ndarray):
-                        ref_s = torch.tensor(ref_s, dtype=torch.float32)
-                    elif isinstance(ref_s, list):
-                        ref_s = torch.tensor(ref_s, dtype=torch.float32)
-                        
-                    print(f"🔄 Individual processing with tensor types: ps={type(ps)}, ref_s={type(ref_s)}")
-                    audio = models[False](ps, ref_s, speed)
-                    
-                    if audio is not None:
-                        processed_audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
-                        if isinstance(processed_audio, torch.Tensor):
-                            processed_audio = processed_audio.cpu().numpy()
-                        all_audio_chunks.append(processed_audio)
-                    else:
-                        print("⚠️ Model returned None for audio")
-                except Exception as inner_e:
-                    print(f"❌ Individual processing failed: {str(inner_e)}")
-                    import traceback
-                    print(f"❌ Individual processing traceback: {traceback.format_exc()}")
-                    # Don't raise exception, just continue with other chunks
-    
-    # Step 5: Combine audio chunks
-    step5_start = time.time()
-    print(f"⏱️ Step 4: Model inference and batch processing took {time.time() - step4_start:.3f}s")
-    
-    # Check if we have any audio chunks to combine
-    if not all_audio_chunks:
-        print("⚠️ No audio chunks generated, cannot concatenate")
-        return None, ''
+            if use_gpu:
+                audio = models[False](ps, ref_s, speed)
+                audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
+            else:
+                raise HTTPException(status_code=500, detail=str(e))
         
-    # Ensure all chunks are valid numpy arrays with compatible shapes
-    valid_chunks = []
-    for i, chunk in enumerate(all_audio_chunks):
-        if chunk is not None and isinstance(chunk, np.ndarray) and chunk.size > 0:
-            valid_chunks.append(chunk)
-        else:
-            print(f"⚠️ Skipping invalid audio chunk at index {i}: {type(chunk)}")
+        all_audio_chunks.append(audio.numpy())
+        all_phonemes.append(ps)
     
-    # Check if we have any valid chunks after filtering
-    if not valid_chunks:
-        print("⚠️ No valid audio chunks to concatenate")
-        # Return a short silence instead of failing
-        silence = np.zeros(24000)  # 1 second of silence at 24kHz
-        return (24000, silence), ''
+    if not all_audio_chunks:
+        return None, ''
     
-    combined_audio = np.concatenate(valid_chunks)
-    
-    # Convert phoneme groups to strings if they're lists
-    string_phoneme_groups = []
-    for pg in phoneme_groups:
-        if isinstance(pg, (list, np.ndarray)):
-            # Convert list of integers to a string representation
-            pg_str = ' '.join(str(p) for p in pg)
-            string_phoneme_groups.append(pg_str)
-        elif isinstance(pg, str):
-            string_phoneme_groups.append(pg)
-        else:
-            string_phoneme_groups.append(str(pg))
-    
-    combined_phonemes = '\n'.join(string_phoneme_groups) if string_phoneme_groups else ''
-    print(f"⏱️ Step 5: Audio combination took {time.time() - step5_start:.3f}s")
+    combined_audio = np.concatenate(all_audio_chunks)
+    combined_phonemes = '\n'.join(all_phonemes)
     
     return (24000, combined_audio), combined_phonemes
 
@@ -1207,7 +903,7 @@ async def generate_streaming_audio(
     sultry: float = 0.0,
     fiction: bool = False
 ):
-    """Generate audio in chunks and create HLS stream with optimized processing"""
+    """Generate audio in chunks and create HLS stream"""
     try:
         # Process text into sentences or paragraphs
         text_chunks = preprocess_text(text).split('\n\n')
@@ -1222,78 +918,55 @@ async def generate_streaming_audio(
         segment_duration = 2  # seconds
         sample_rate = 24000
         
-        # Prepare the playlist header
-        with open(f"{stream_dir}/playlist.m3u8", "w") as f:
-            f.write("#EXTM3U\n")
-            f.write("#EXT-X-VERSION:3\n")
-            f.write(f"#EXT-X-TARGETDURATION:{segment_duration}\n")
-            f.write("#EXT-X-MEDIA-SEQUENCE:0\n")
-        
-        # Batch process chunks for better performance
-        # Process in batches of 3 chunks at a time
-        BATCH_SIZE = 3
+        # Process each chunk
         segment_index = 0
-        
-        for i in range(0, len(text_chunks), BATCH_SIZE):
-            batch_chunks = [chunk for chunk in text_chunks[i:i+BATCH_SIZE] if chunk.strip()]
-            if not batch_chunks:
+        for i, chunk in enumerate(text_chunks):
+            if not chunk.strip():
                 continue
-            
-            # Process batch in parallel
-            batch_results = []
-            for chunk in batch_chunks:
-                # Generate audio for this chunk - run in thread pool
-                audio_result = await run_in_threadpool(
-                    lambda c=chunk: generate_audio(
-                        c, 
-                        voice_id, 
-                        speed, 
-                        use_gpu, 
-                        breathiness, 
-                        tenseness, 
-                        jitter, 
-                        sultry
-                    )
+                
+            # Generate audio for this chunk
+            audio_data = await run_in_threadpool(
+                lambda: generate_audio(
+                    chunk, 
+                    voice_id, 
+                    speed, 
+                    use_gpu, 
+                    breathiness, 
+                    tenseness, 
+                    jitter, 
+                    sultry
                 )
-                if audio_result and audio_result[0]:
-                    batch_results.append(audio_result[0][1])  # Get the audio array
+            )
             
-            # Process each audio result and create segments
-            for audio_array in batch_results:
-                # Split into segments of segment_duration
-                samples_per_segment = int(segment_duration * sample_rate)
-                
-                # Process segments in chunks to avoid memory issues
-                for j in range(0, len(audio_array), samples_per_segment):
-                    segment = audio_array[j:j+samples_per_segment]
-                    
-                    # Pad last segment if needed
-                    if len(segment) < samples_per_segment:
-                        segment = np.pad(segment, (0, samples_per_segment - len(segment)))
-                    
-                    # Save segment as TS file
-                    segment_file = f"{stream_dir}/segment_{segment_index}.ts"
-                    
-                    # Convert to bytes and save
-                    segment_bytes = segment.tobytes()
-                    with open(segment_file, "wb") as f:
-                        f.write(segment_bytes)
-                    
-                    # Update playlist
-                    with open(f"{stream_dir}/playlist.m3u8", "a") as f:
-                        f.write(f"#EXTINF:{segment_duration},\n")
-                        f.write(f"segment_{segment_index}.ts\n")
-                    
-                    segment_index += 1
+            # Convert to WAV format
+            audio_array = np.frombuffer(audio_data, dtype=np.int16)
             
-            # Update playlist after each batch is processed
-            # This allows clients to start playing while the rest is being generated
-            with open(f"{stream_dir}/playlist.m3u8", "a") as f:
-                f.write("#EXT-X-DISCONTINUITY\n")  # Mark potential discontinuity between batches
+            # Split into segments of segment_duration
+            samples_per_segment = int(segment_duration * sample_rate)
+            for j in range(0, len(audio_array), samples_per_segment):
+                segment = audio_array[j:j+samples_per_segment]
                 
-            # Small delay between batches to allow system resources to recover
-            # Reduced from 0.1s per segment to 0.05s per batch
-            await asyncio.sleep(0.05)
+                # Pad last segment if needed
+                if len(segment) < samples_per_segment:
+                    segment = np.pad(segment, (0, samples_per_segment - len(segment)))
+                
+                # Save segment as TS file
+                segment_file = f"{stream_dir}/segment_{segment_index}.ts"
+                
+                # Convert to bytes and save
+                segment_bytes = segment.tobytes()
+                with open(segment_file, "wb") as f:
+                    f.write(segment_bytes)
+                
+                # Update playlist
+                with open(f"{stream_dir}/playlist.m3u8", "a") as f:
+                    f.write(f"#EXTINF:{segment_duration},\n")
+                    f.write(f"segment_{segment_index}.ts\n")
+                
+                segment_index += 1
+                
+                # Small delay to simulate real-time generation
+                await asyncio.sleep(0.1)
         
         # Mark the end of the playlist
         with open(f"{stream_dir}/playlist.m3u8", "a") as f:

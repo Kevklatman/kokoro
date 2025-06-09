@@ -5,10 +5,14 @@ import io
 import wave
 import base64
 import numpy as np
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Literal, Union
 import logging
+from pydub import AudioSegment
 
 logger = logging.getLogger(__name__)
+
+# Audio format types
+AudioFormat = Literal['wav', 'mp3']
 
 
 def audio_to_wav_bytes(audio_data: np.ndarray, sample_rate: int = 24000, quality: str = 'high') -> bytes:
@@ -72,63 +76,149 @@ def _downsample(audio_data: np.ndarray, original_rate: int, target_rate: int) ->
     return audio_data[::ratio]
 
 
-def audio_to_base64(audio_data: np.ndarray, sample_rate: int = 24000, quality: str = 'high') -> str:
-    """Convert audio data to base64 encoded WAV string with compression options
+def numpy_to_mp3_bytes(audio_data: np.ndarray, sample_rate: int = 24000, bitrate: str = '128k') -> bytes:
+    """Convert numpy audio data to MP3 format bytes
+    
+    Args:
+        audio_data: Audio data as numpy array
+        sample_rate: Sample rate of the audio
+        bitrate: MP3 bitrate (e.g., '64k', '128k', '192k')
+        
+    Returns:
+        MP3 encoded bytes
+    """
+    # First convert to WAV format (in memory)
+    wav_bytes = audio_to_wav_bytes(audio_data, sample_rate, quality='high')
+    
+    # Use pydub to convert WAV to MP3
+    wav_audio = AudioSegment.from_wav(io.BytesIO(wav_bytes))
+    
+    # Export as MP3 to a bytes buffer
+    mp3_buffer = io.BytesIO()
+    wav_audio.export(mp3_buffer, format="mp3", bitrate=bitrate)
+    mp3_buffer.seek(0)
+    
+    mp3_bytes = mp3_buffer.read()
+    logger.info(f"MP3 encoded size ({bitrate}): {len(mp3_bytes)/1024:.1f}KB")
+    return mp3_bytes
+
+
+def audio_to_bytes(audio_data: np.ndarray, sample_rate: int = 24000, 
+                  quality: str = 'high', format: AudioFormat = 'wav') -> bytes:
+    """Convert audio data to bytes in the specified format with compression options
     
     Args:
         audio_data: Audio data as numpy array
         sample_rate: Sample rate of the audio
         quality: Quality level ('high', 'medium', 'low')
+        format: Output format ('wav' or 'mp3')
+        
+    Returns:
+        Audio bytes in the specified format
     """
-    wav_bytes = audio_to_wav_bytes(audio_data, sample_rate, quality)
-    encoded = base64.b64encode(wav_bytes).decode('utf-8')
-    logger.info(f"Base64 encoded audio size: {len(encoded)/1024:.1f}KB")
+    if format == 'mp3':
+        # Map quality levels to MP3 bitrates
+        bitrate_map = {
+            'high': '192k',
+            'medium': '128k',
+            'low': '64k'
+        }
+        bitrate = bitrate_map.get(quality, '128k')
+        return numpy_to_mp3_bytes(audio_data, sample_rate, bitrate)
+    else:  # wav
+        return audio_to_wav_bytes(audio_data, sample_rate, quality)
+
+
+def audio_to_base64(audio_data: np.ndarray, sample_rate: int = 24000, 
+                   quality: str = 'high', format: AudioFormat = 'wav') -> str:
+    """Convert audio data to base64 encoded string with compression options
+    
+    Args:
+        audio_data: Audio data as numpy array
+        sample_rate: Sample rate of the audio
+        quality: Quality level ('high', 'medium', 'low')
+        format: Output format ('wav' or 'mp3')
+    """
+    audio_bytes = audio_to_bytes(audio_data, sample_rate, quality, format)
+    encoded = base64.b64encode(audio_bytes).decode('utf-8')
+    logger.info(f"Base64 encoded {format} size: {len(encoded)/1024:.1f}KB")
     return encoded
 
 
-def create_wav_response(audio_data: np.ndarray, sample_rate: int = 24000, quality: str = 'medium') -> io.BytesIO:
-    """Create a WAV file response for streaming with compression options
+def create_audio_response(audio_data: np.ndarray, sample_rate: int = 24000, 
+                       quality: str = 'medium', format: AudioFormat = 'wav') -> Tuple[io.BytesIO, str]:
+    """Create an audio file response for streaming with compression options
     
     Args:
         audio_data: Audio data as numpy array
         sample_rate: Sample rate of the audio
         quality: Quality level ('high', 'medium', 'low')
             Default is 'medium' to balance quality and response size
+        format: Output format ('wav' or 'mp3')
+        
+    Returns:
+        Tuple of (BytesIO buffer, content_type)
     """
-    wav_bytes = audio_to_wav_bytes(audio_data, sample_rate, quality)
-    buffer = io.BytesIO(wav_bytes)
-    logger.info(f"WAV response size: {len(wav_bytes)/1024:.1f}KB")
+    audio_bytes = audio_to_bytes(audio_data, sample_rate, quality, format)
+    buffer = io.BytesIO(audio_bytes)
+    
+    # Determine the content type based on format
+    content_type = "audio/wav" if format == 'wav' else "audio/mpeg"
+    
+    logger.info(f"{format.upper()} response size ({quality}): {len(audio_bytes)/1024:.1f}KB")
+    return buffer, content_type
+
+
+# Keep the original function for backward compatibility
+def create_wav_response(audio_data: np.ndarray, sample_rate: int = 24000, quality: str = 'medium') -> io.BytesIO:
+    """Create a WAV file response for streaming with compression options (legacy function)"""
+    buffer, _ = create_audio_response(audio_data, sample_rate, quality, format='wav')
     return buffer
 
 
-def optimize_response_size(audio_data: np.ndarray, sample_rate: int = 24000, max_size_kb: int = 10000) -> Tuple[io.BytesIO, str]:
+def optimize_response_size(audio_data: np.ndarray, sample_rate: int = 24000, 
+                          max_size_kb: int = 10000, use_mp3: bool = True) -> Tuple[io.BytesIO, str, str]:
     """Automatically optimize audio response size to fit within Cloud Run limits
     
     Args:
         audio_data: Audio data as numpy array
         sample_rate: Sample rate of the audio
         max_size_kb: Maximum allowed response size in KB (default: 10MB)
+        use_mp3: Whether to try MP3 format for better compression
         
     Returns:
-        Tuple of (BytesIO buffer, quality level used)
+        Tuple of (BytesIO buffer, quality level used, format used)
     """
-    # Try high quality first
+    # Try high quality WAV first
     quality = 'high'
-    wav_bytes = audio_to_wav_bytes(audio_data, sample_rate, quality)
+    format = 'wav'
+    audio_bytes = audio_to_bytes(audio_data, sample_rate, quality, format)
     
-    # If too large, try medium quality
-    if len(wav_bytes) > max_size_kb * 1024:
+    # If too large, try medium quality WAV
+    if len(audio_bytes) > max_size_kb * 1024:
         quality = 'medium'
-        wav_bytes = audio_to_wav_bytes(audio_data, sample_rate, quality)
+        audio_bytes = audio_to_bytes(audio_data, sample_rate, quality, format)
         
-        # If still too large, use low quality
-        if len(wav_bytes) > max_size_kb * 1024:
+        # If still too large, try low quality WAV
+        if len(audio_bytes) > max_size_kb * 1024:
             quality = 'low'
-            wav_bytes = audio_to_wav_bytes(audio_data, sample_rate, quality)
+            audio_bytes = audio_to_bytes(audio_data, sample_rate, quality, format)
             
-            # If still too large, log a warning
-            if len(wav_bytes) > max_size_kb * 1024:
-                logger.warning(f"Audio response still exceeds {max_size_kb}KB even at lowest quality")
+            # If still too large and MP3 is allowed, switch to MP3
+            if len(audio_bytes) > max_size_kb * 1024 and use_mp3:
+                format = 'mp3'
+                quality = 'medium'  # Start with medium quality MP3
+                audio_bytes = audio_to_bytes(audio_data, sample_rate, quality, format)
+                
+                # If still too large, try low quality MP3
+                if len(audio_bytes) > max_size_kb * 1024:
+                    quality = 'low'
+                    audio_bytes = audio_to_bytes(audio_data, sample_rate, quality, format)
+                    
+                    # If still too large, log a warning
+                    if len(audio_bytes) > max_size_kb * 1024:
+                        logger.warning(f"Audio response still exceeds {max_size_kb}KB even with low quality MP3")
     
-    logger.info(f"Optimized audio response using {quality} quality. Size: {len(wav_bytes)/1024:.1f}KB")
-    return io.BytesIO(wav_bytes), quality
+    logger.info(f"Optimized audio response using {quality} quality {format.upper()}. Size: {len(audio_bytes)/1024:.1f}KB")
+    buffer = io.BytesIO(audio_bytes)
+    return buffer, quality, format

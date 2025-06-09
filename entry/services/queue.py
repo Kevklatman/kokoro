@@ -13,7 +13,7 @@ from typing import Dict
 
 from entry.models import TTSJob, JobStatus, JobStatusEnum
 from entry.core.tts import select_voice_and_preset, preprocess_text, generate_audio
-from entry.utils.audio import audio_to_base64
+from entry.utils.audio import audio_to_base64, audio_to_bytes
 from loguru import logger
 
 
@@ -69,17 +69,23 @@ def process_queue():
                     if audio_data is None:
                         raise Exception("Failed to generate audio")
                     
-                    # Get quality parameter with default of 'medium' for jobs
-                    # Jobs can be long, so we use medium quality by default
+                    # Get quality and format parameters with defaults for jobs
+                    # Jobs can be long, so we use medium quality and MP3 by default
                     quality = getattr(job, 'quality', 'medium') if hasattr(job, 'quality') else 'medium'
+                    format = getattr(job, 'format', 'mp3') if hasattr(job, 'format') else 'mp3'
+                    
                     if quality == 'auto':
                         # For background jobs, use medium quality by default
                         quality = 'medium'
+                    
+                    # Default to MP3 for jobs to save space
+                    if format == 'auto':
+                        format = 'mp3'
                         
-                    logger.info(f"Processing job {job_id} with quality {quality}")
+                    logger.info(f"Processing job {job_id} with quality {quality}, format {format}")
                     
                     # Use our optimized audio_to_base64 utility
-                    audio_base64 = audio_to_base64(audio_data, sample_rate, quality=quality)
+                    audio_base64 = audio_to_base64(audio_data, sample_rate, quality=quality, format=format)
                     
                     jobs_storage[job_id].status = JobStatusEnum.COMPLETED
                     jobs_storage[job_id].completed_at = datetime.now()

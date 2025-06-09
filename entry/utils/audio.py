@@ -56,11 +56,19 @@ def audio_to_wav_bytes(audio_data: np.ndarray, sample_rate: int = 24000, quality
         wav_file.setsampwidth(sampwidth)
         wav_file.setframerate(sample_rate)
         
-        # Scale and convert to appropriate bit depth
+        # Scale and convert to appropriate bit depth with dithering to reduce quantization noise
         scaled = np.clip(audio_data, -1.0, 1.0)
         if sampwidth == 1:  # 8-bit
+            # Add small amount of dither noise before quantizing to reduce quantization artifacts
+            dither = np.random.uniform(-0.5, 0.5, size=scaled.shape) / 127.0
+            scaled = scaled + dither
+            scaled = np.clip(scaled, -1.0, 1.0)  # Re-clip after adding dither
             scaled = (scaled * 127 + 128).astype(np.uint8)
         else:  # 16-bit
+            # Add smaller amount of dither for 16-bit (less noticeable)
+            dither = np.random.uniform(-0.5, 0.5, size=scaled.shape) / 32767.0
+            scaled = scaled + dither
+            scaled = np.clip(scaled, -1.0, 1.0)  # Re-clip after adding dither
             scaled = (scaled * 32767).astype(np.int16)
         
         wav_file.writeframes(scaled.tobytes())
@@ -70,10 +78,54 @@ def audio_to_wav_bytes(audio_data: np.ndarray, sample_rate: int = 24000, quality
 
 
 def _downsample(audio_data: np.ndarray, original_rate: int, target_rate: int) -> np.ndarray:
-    """Downsample audio data to a lower sample rate"""
-    # Simple downsampling by taking every nth sample
-    ratio = original_rate // target_rate
-    return audio_data[::ratio]
+    """Downsample audio data to a lower sample rate using efficient resampling
+    
+    This uses a balance of quality and performance to maintain audio fidelity
+    while keeping processing time reasonable.
+    """
+    # Calculate the resampling ratio
+    ratio = original_rate / target_rate
+    
+    # For small ratio changes, use a simple but efficient method
+    if ratio <= 3:
+        # Apply a simple low-pass filter first to reduce aliasing
+        # This is a basic FIR filter implementation
+        if ratio > 1.5:  # Only apply filter if downsampling significantly
+            # Simple moving average as a basic low-pass filter
+            filter_size = min(int(ratio * 2), 10)  # Adaptive filter size
+            filter_kernel = np.ones(filter_size) / filter_size
+            # Apply the filter using numpy's convolve function
+            audio_data = np.convolve(audio_data, filter_kernel, mode='same')
+        
+        # Then do the actual downsampling
+        indices = np.arange(0, len(audio_data), ratio)
+        indices = np.floor(indices).astype(int)
+        indices = np.minimum(indices, len(audio_data) - 1)
+        return audio_data[indices]
+    
+    # For larger ratio changes, use scipy if available for better quality
+    try:
+        from scipy import signal
+        # Calculate the new length after resampling
+        new_length = int(len(audio_data) / ratio)
+        # Use the more efficient resample_poly instead of resample
+        # This is much faster while still providing good quality
+        gcd = np.gcd(original_rate, target_rate)
+        up = target_rate // gcd
+        down = original_rate // gcd
+        resampled = signal.resample_poly(audio_data, up, down)
+        # Trim to expected length (resample_poly might return slightly different length)
+        if len(resampled) > new_length:
+            resampled = resampled[:new_length]
+        return resampled
+    except (ImportError, AttributeError):
+        # Fallback to a simple method if scipy isn't available
+        logger.warning("scipy not available or incompatible, using simple downsampling")
+        # Use a slightly better approach than just taking every nth sample
+        indices = np.arange(0, len(audio_data), ratio)
+        indices = np.floor(indices).astype(int)
+        indices = np.minimum(indices, len(audio_data) - 1)
+        return audio_data[indices]
 
 
 def numpy_to_mp3_bytes(audio_data: np.ndarray, sample_rate: int = 24000, bitrate: str = '128k') -> bytes:

@@ -13,6 +13,8 @@ from typing import Dict
 
 from entry.models import TTSJob, JobStatus, JobStatusEnum
 from entry.core.tts import select_voice_and_preset, preprocess_text, generate_audio
+from entry.utils.audio import audio_to_base64
+from loguru import logger
 
 
 # Global job storage and queue
@@ -67,21 +69,17 @@ def process_queue():
                     if audio_data is None:
                         raise Exception("Failed to generate audio")
                     
-                    # Convert to WAV and encode as base64
-                    audio_buffer = io.BytesIO()
-                    channels = 1
-                    sampwidth = 2
+                    # Get quality parameter with default of 'medium' for jobs
+                    # Jobs can be long, so we use medium quality by default
+                    quality = getattr(job, 'quality', 'medium') if hasattr(job, 'quality') else 'medium'
+                    if quality == 'auto':
+                        # For background jobs, use medium quality by default
+                        quality = 'medium'
+                        
+                    logger.info(f"Processing job {job_id} with quality {quality}")
                     
-                    with wave.open(audio_buffer, 'wb') as wav_file:
-                        wav_file.setnchannels(channels)
-                        wav_file.setsampwidth(sampwidth)
-                        wav_file.setframerate(sample_rate)
-                        scaled = np.clip(audio_data, -1.0, 1.0)
-                        scaled = (scaled * 32767).astype(np.int16)
-                        wav_file.writeframes(scaled.tobytes())
-                    
-                    audio_buffer.seek(0)
-                    audio_base64 = base64.b64encode(audio_buffer.read()).decode('utf-8')
+                    # Use our optimized audio_to_base64 utility
+                    audio_base64 = audio_to_base64(audio_data, sample_rate, quality=quality)
                     
                     jobs_storage[job_id].status = JobStatusEnum.COMPLETED
                     jobs_storage[job_id].completed_at = datetime.now()

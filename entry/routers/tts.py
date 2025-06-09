@@ -12,7 +12,8 @@ from entry.core.tts import (
     generate_audio, generate_audio_batch, tokenize_text, 
     preprocess_text, select_voice_and_preset
 )
-from entry.utils.audio import audio_to_base64, create_wav_response
+from entry.utils.audio import audio_to_base64, create_wav_response, optimize_response_size
+from loguru import logger
 
 router = APIRouter()
 
@@ -21,6 +22,10 @@ router = APIRouter()
 async def text_to_speech(request: TTSRequest):
     """Convert text to speech and return audio as WAV file"""
     try:
+        # Get quality parameter with default of 'auto' for automatic optimization
+        quality = getattr(request, 'quality', 'auto') if hasattr(request, 'quality') else 'auto'
+        logger.info(f"TTS request for voice {request.voice} with quality {quality}")
+        
         # Select voice and preset
         preset_name = getattr(request, 'preset', None) if hasattr(request, 'preset') else None
         selected_voice, emotion_preset = select_voice_and_preset(
@@ -57,7 +62,15 @@ async def text_to_speech(request: TTSRequest):
         if audio_data is None:
             raise HTTPException(status_code=500, detail="Audio generation failed")
 
-        audio_buffer = create_wav_response(audio_data, sample_rate)
+        # Handle different quality settings
+        if quality == 'auto':
+            # Automatically optimize response size to avoid Cloud Run limits
+            audio_buffer, used_quality = optimize_response_size(audio_data, sample_rate, max_size_kb=30000)
+            logger.info(f"Auto-selected quality: {used_quality} for response")
+        else:
+            # Use the specified quality
+            audio_buffer = create_wav_response(audio_data, sample_rate, quality=quality)
+            
         return StreamingResponse(audio_buffer, media_type="audio/wav")
         
     except Exception as e:
@@ -98,10 +111,19 @@ async def batch_text_to_speech(request: TTSBatchRequest):
             )
             results.append((sample_rate, audio_data))
         
-        # Convert each audio result to base64
+        # Get quality parameter with default of 'auto'
+        quality = getattr(request, 'quality', 'auto') if hasattr(request, 'quality') else 'auto'
+        logger.info(f"Batch TTS request with quality {quality}")
+        
+        # Convert each audio result to base64 with appropriate quality
         audio_base64_list = []
         for sample_rate, audio_data in results:
-            audio_base64 = audio_to_base64(audio_data, sample_rate)
+            if quality == 'auto':
+                # Use medium quality for batch requests to balance size and quality
+                audio_base64 = audio_to_base64(audio_data, sample_rate, quality='medium')
+            else:
+                # Use the specified quality
+                audio_base64 = audio_to_base64(audio_data, sample_rate, quality=quality)
             audio_base64_list.append(audio_base64)
         
         return BatchTTSResponse(audios=audio_base64_list)
@@ -153,10 +175,29 @@ async def text_to_speech_base64(request: TTSRequest):
         if audio_data is None:
             raise HTTPException(status_code=500, detail="Failed to generate audio")
         
-        audio_base64 = audio_to_base64(audio_data, sample_rate)
+        # Get quality parameter
+        quality = request.quality.value
+        logger.info(f"Base64 TTS request with quality {quality}")
+        
+        if quality == 'auto':
+            # For base64 responses, use medium quality by default to balance size and quality
+            # If it's still too large, we'll automatically reduce further
+            _, used_quality = optimize_response_size(audio_data, sample_rate, max_size_kb=30000)
+            audio_base64 = audio_to_base64(audio_data, sample_rate, quality=used_quality)
+            logger.info(f"Auto-selected quality: {used_quality} for base64 response")
+        else:
+            # Use the specified quality
+            audio_base64 = audio_to_base64(audio_data, sample_rate, quality=quality)
+        
+        # Get the actual sample rate after potential downsampling
+        actual_sample_rate = sample_rate
+        if quality == 'medium' or (quality == 'auto' and used_quality == 'medium'):
+            actual_sample_rate = 16000
+        elif quality == 'low' or (quality == 'auto' and used_quality == 'low'):
+            actual_sample_rate = 8000
         
         return TTSResponse(
-            sample_rate=sample_rate,
+            sample_rate=actual_sample_rate,
             audio_base64=audio_base64,
             phonemes=phonemes
         )

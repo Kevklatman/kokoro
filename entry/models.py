@@ -12,6 +12,14 @@ class PreprocessRequest(BaseModel):
     text: str
 
 
+class AudioQuality(str, Enum):
+    """Audio quality options for TTS"""
+    HIGH = "high"      # 24kHz, 16-bit
+    MEDIUM = "medium"  # 16kHz, 16-bit
+    LOW = "low"        # 8kHz, 8-bit
+    AUTO = "auto"      # Automatically determine based on response size
+
+
 class TTSRequest(BaseModel):
     text: str
     voice: Optional[str] = None
@@ -22,6 +30,7 @@ class TTSRequest(BaseModel):
     jitter: float = 0.0
     sultry: float = 0.0
     fiction: bool = False
+    quality: AudioQuality = AudioQuality.AUTO
 
 
 class TokenizeRequest(BaseModel):
@@ -39,6 +48,7 @@ class TTSBatchRequest(BaseModel):
     jitter: Optional[float] = 0.0
     sultry: Optional[float] = 0.0
     fiction: Optional[List[bool]] = None
+    quality: AudioQuality = AudioQuality.AUTO
 
 
 # Job models
@@ -59,6 +69,7 @@ class TTSJobRequest(BaseModel):
     jitter: float = 0.0
     sultry: float = 0.0
     fiction: bool = False
+    quality: AudioQuality = AudioQuality.AUTO
     # Metadata
     title: str = "Untitled"
     author: str = "Unknown Author"

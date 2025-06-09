@@ -3,6 +3,7 @@ TTS API routes
 """
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+import base64
 
 from entry.models import (
     TTSRequest, TTSBatchRequest, TokenizeRequest, PreprocessRequest,
@@ -12,15 +13,25 @@ from entry.core.tts import (
     generate_audio, generate_audio_batch, tokenize_text, 
     preprocess_text, select_voice_and_preset
 )
-from entry.utils.audio import audio_to_base64, create_wav_response
+from entry.utils.audio import audio_to_base64, create_wav_response, create_audio_response, optimize_response_size, audio_to_bytes
+from loguru import logger
 
 router = APIRouter()
 
 
 @router.post("/", response_class=StreamingResponse)
 async def text_to_speech(request: TTSRequest):
-    """Convert text to speech and return audio as WAV file"""
+    """Convert text to speech and return audio"""
     try:
+        # Extract request parameters
+        text = request.text
+        voice = request.voice
+        speed = request.speed
+        quality = getattr(request, 'quality', 'auto') if hasattr(request, 'quality') else 'auto'
+        format = getattr(request, 'format', 'auto') if hasattr(request, 'format') else 'auto'
+        
+        logger.info(f"TTS request for voice {voice} with quality {quality} and format {format}")
+        
         # Select voice and preset
         preset_name = getattr(request, 'preset', None) if hasattr(request, 'preset') else None
         selected_voice, emotion_preset = select_voice_and_preset(
@@ -35,7 +46,6 @@ async def text_to_speech(request: TTSRequest):
             jitter = emotion_preset['jitter']
             sultry = emotion_preset['sultry']
         else:
-            speed = request.speed
             breathiness = request.breathiness
             tenseness = request.tenseness
             jitter = request.jitter
@@ -57,8 +67,27 @@ async def text_to_speech(request: TTSRequest):
         if audio_data is None:
             raise HTTPException(status_code=500, detail="Audio generation failed")
 
-        audio_buffer = create_wav_response(audio_data, sample_rate)
-        return StreamingResponse(audio_buffer, media_type="audio/wav")
+        # Handle different quality and format settings
+        if quality == 'auto' or format == 'auto':
+            # Automatically optimize response size to avoid Cloud Run limits
+            audio_buffer, used_quality, used_format = optimize_response_size(
+                audio_data, sample_rate, max_size_kb=30000, use_mp3=(format != 'wav')
+            )
+            logger.info(f"Auto-selected quality: {used_quality}, format: {used_format} for response")
+            content_type = "audio/mpeg" if used_format == 'mp3' else "audio/wav"
+            file_ext = "mp3" if used_format == 'mp3' else "wav"
+        else:
+            # Use the specified quality and format
+            audio_buffer, content_type = create_audio_response(audio_data, sample_rate, quality=quality, format=format)
+            file_ext = "mp3" if format == 'mp3' else "wav"
+            
+        return StreamingResponse(
+            audio_buffer, 
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f"attachment; filename=tts_{selected_voice}_{quality}.{file_ext}"
+            }
+        )
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -98,10 +127,29 @@ async def batch_text_to_speech(request: TTSBatchRequest):
             )
             results.append((sample_rate, audio_data))
         
-        # Convert each audio result to base64
+        # Get quality parameter with default of 'auto'
+        # Apply quality and format settings
+        quality = request.quality.value if hasattr(request, 'quality') else 'medium'
+        format = request.format.value if hasattr(request, 'format') else 'wav'
+        logger.info(f"Batch TTS request with quality {quality}, format {format}")
+        
         audio_base64_list = []
         for sample_rate, audio_data in results:
-            audio_base64 = audio_to_base64(audio_data, sample_rate)
+            if quality == 'auto':
+                # For batch requests, use medium quality by default
+                if format == 'auto':
+                    # Default to MP3 for batch requests to save bandwidth
+                    audio_base64 = audio_to_base64(audio_data, sample_rate, quality='medium', format='mp3')
+                else:
+                    # Use the specified format
+                    audio_base64 = audio_to_base64(audio_data, sample_rate, quality='medium', format=format)
+            else:
+                # Use the specified quality and format
+                if format == 'auto':
+                    # Default to MP3 for batch requests
+                    audio_base64 = audio_to_base64(audio_data, sample_rate, quality=quality, format='mp3')
+                else:
+                    audio_base64 = audio_to_base64(audio_data, sample_rate, quality=quality, format=format)
             audio_base64_list.append(audio_base64)
         
         return BatchTTSResponse(audios=audio_base64_list)
@@ -153,10 +201,35 @@ async def text_to_speech_base64(request: TTSRequest):
         if audio_data is None:
             raise HTTPException(status_code=500, detail="Failed to generate audio")
         
-        audio_base64 = audio_to_base64(audio_data, sample_rate)
+        # Get quality and format parameters
+        quality = request.quality.value
+        format = request.format.value if hasattr(request, 'format') else 'auto'
+        logger.info(f"Base64 TTS request with quality {quality}, format {format}")
+        
+        if quality == 'auto' or format == 'auto':
+            # For base64 responses, optimize size based on quality and format
+            audio_buffer, used_quality, used_format = optimize_response_size(
+                audio_data, sample_rate, max_size_kb=30000, use_mp3=(format != 'wav')
+            )
+            # Convert the optimized buffer to base64
+            audio_bytes = audio_buffer.getvalue()
+            audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+            logger.info(f"Auto-selected quality: {used_quality}, format: {used_format} for base64 response")
+            # Remember the format for the response
+            format = used_format
+        else:
+            # Use the specified quality and format
+            audio_base64 = audio_to_base64(audio_data, sample_rate, quality=quality, format=format)
+        
+        # Get the actual sample rate after potential downsampling
+        actual_sample_rate = sample_rate
+        if quality == 'medium' or (quality == 'auto' and used_quality == 'medium'):
+            actual_sample_rate = 16000
+        elif quality == 'low' or (quality == 'auto' and used_quality == 'low'):
+            actual_sample_rate = 8000
         
         return TTSResponse(
-            sample_rate=sample_rate,
+            sample_rate=actual_sample_rate,
             audio_base64=audio_base64,
             phonemes=phonemes
         )

@@ -1,7 +1,7 @@
 from .model import KModel
 from .g2p_cache import G2PCache
 from dataclasses import dataclass
-from huggingface_hub import hf_hub_download
+from .model_utils import cached_hub_download
 from loguru import logger
 from misaki import en, espeak
 from typing import Callable, Generator, List, Optional, Tuple, Union, Any
@@ -201,7 +201,7 @@ class KPipeline:
             if f is None:
                 logger.info(f"Voice not found locally, downloading from Hugging Face: {voice}")
                 try:
-                    f = hf_hub_download(repo_id=self.repo_id, filename=f'voices/{voice}.pt')
+                    f = cached_hub_download(repo_id=self.repo_id, filename=f'voices/{voice}.pt', models_dir=self.models_dir)
                 except Exception as e:
                     logger.error(f"Failed to download voice {voice}: {str(e)}")
                     raise

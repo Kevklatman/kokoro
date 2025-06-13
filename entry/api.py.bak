@@ -22,8 +22,8 @@ pipelines['b'].g2p.lexicon.golds['kokoro'] = 'kˈQkəɹQ'
 
 # Use a subset of known working voices (based on the error messages)
 VOICES = {
-    'af_heart', 'af_bella', 'af_nicole', 'af_aoede', 'af_kore', 'af_sarah', 'af_nova', 
-    'af_sky', 'af_alloy', 'af_jessica', 'af_river', 'am_michael', 'am_fenrir',
+    'af_heart', 'af_sky', 'af_nicole', 'af_aoede', 'af_kore', 'af_sarah', 'af_nova', 
+    'af_bella', 'af_alloy', 'af_jessica', 'af_river', 'am_michael', 'am_fenrir',
     'am_kevin', 'am_josh', 'am_adam', 'am_jack', 'bf_ruby', 'bf_selene',
     'bm_michael', 'bm_kevin'
 }
@@ -95,7 +95,7 @@ def select_voice(requested_voice, is_fiction):
         return requested_voice  # Use specified voice if provided
     
     # Default voices
-    return "af_bella" if is_fiction else "af_sky"  # Bella for fiction, Sky for non-fiction
+    return "af_sky" if is_fiction else "af_sky"  # Bella for fiction, Sky for non-fiction
 
 # Core TTS functionality from original app.py
 def forward_gpu(ps, ref_s, speed):

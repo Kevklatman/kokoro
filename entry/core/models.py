@@ -31,13 +31,13 @@ VOICES = set()
 # Voice choices and presets
 CHOICES = {
     '🇺🇸 🚺 Heart ❤️': 'af_heart',
-    '🇺🇸 🚺 Bella 🔥': 'af_bella',
+    '🇺🇸 🚺 Sky 🔥': 'af_sky',
     '🇺🇸 🚺 Nicole 🎧': 'af_nicole',
     '🇺🇸 🚺 Aoede': 'af_aoede',
     '🇺🇸 🚺 Kore': 'af_kore',
     '🇺🇸 🚺 Sarah': 'af_sarah',
     '🇺🇸 🚺 Nova': 'af_nova',
-    '🇺🇸 🚺 Sky': 'af_sky',
+    '🇺🇸 🚺 Bella': 'af_bella',
     '🇺🇸 🚺 Alloy': 'af_alloy',
     '🇺🇸 🚺 Jessica': 'af_jessica',
     '🇺🇸 🚺 River': 'af_river',
@@ -77,7 +77,7 @@ def initialize_models(force_online=False):
     if settings.hf_token:
         login(token=settings.hf_token)
     
-    print(f"Using models directory: {settings.models_dir}")
+    logger.info(f"Using models directory: {settings.models_dir}")
     
     # Initialize models
     cuda_available = torch.cuda.is_available() and settings.cuda_available
@@ -119,16 +119,40 @@ def initialize_models(force_online=False):
     available_voices = set()
     initial_voices = set(CHOICES.values())
     
+    # Check if voice files exist
+    voice_dir = os.path.join(settings.models_dir, 'voices')
+    if not os.path.exists(voice_dir):
+        logger.error(f"Voice directory not found: {voice_dir}")
+        raise RuntimeError(f"Voice directory not found: {voice_dir}")
+    
+    logger.info(f"Found voice directory: {voice_dir}")
+    voice_files = os.listdir(voice_dir)
+    logger.info(f"Available voice files: {voice_files}")
+    
     for voice in initial_voices:
         try:
+            voice_file = f"{voice}.pt"
+            if voice_file not in voice_files:
+                logger.warning(f"Voice file not found: {voice_file}")
+                continue
+                
+            voice_path = os.path.join(voice_dir, voice_file)
+            logger.info(f"Loading voice from: {voice_path}")
+            
             pipelines[voice[0]].load_voice(voice)
             available_voices.add(voice)
-            print(f"Successfully loaded voice: {voice}")
+            logger.info(f"Successfully loaded voice: {voice}")
         except Exception as e:
-            print(f"Failed to load voice {voice}: {str(e)}")
+            logger.error(f"Failed to load voice {voice}: {str(e)}")
+            import traceback
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
+    
+    if not available_voices:
+        logger.error("No voices were loaded successfully")
+        raise RuntimeError("No voices were loaded successfully")
     
     VOICES.update(available_voices)
-    print(f"Loaded {len(VOICES)} voices successfully")
+    logger.info(f"Loaded {len(VOICES)} voices successfully: {', '.join(sorted(VOICES))}")
 
 
 def get_models():

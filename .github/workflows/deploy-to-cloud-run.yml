@@ -9,9 +9,12 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      PROJECT_ID: ${{ secrets.PROJECT_ID }}
       GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
       GCP_REGION: ${{ secrets.GCP_REGION }}
+      AR_HOSTNAME: ${{ secrets.AR_HOSTNAME }}
+      AR_REPOSITORY: ${{ secrets.AR_REPOSITORY }}
+      SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
     
     steps:
       - name: Checkout repository
@@ -25,17 +28,17 @@ jobs:
           
       - name: Authenticate Docker
         run: |
-          gcloud auth configure-docker
+          gcloud auth configure-docker ${{ env.AR_HOSTNAME }}
           
       - name: Build and push Docker image
         run: |
-          docker build -t gcr.io/${{ env.PROJECT_ID }}/apiforswifttts:${{ github.sha }} .
-          docker push gcr.io/${{ env.PROJECT_ID }}/apiforswifttts:${{ github.sha }}
+          docker build -t ${{ env.AR_HOSTNAME }}/${{ env.PROJECT_ID }}/${{ env.AR_REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }} .
+          docker push ${{ env.AR_HOSTNAME }}/${{ env.PROJECT_ID }}/${{ env.AR_REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
           
       - name: Deploy to Cloud Run
         run: |
-          gcloud run deploy apiforswifttts \
-            --image=gcr.io/${{ env.PROJECT_ID }}/apiforswifttts:${{ github.sha }} \
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image=${{ env.AR_HOSTNAME }}/${{ env.PROJECT_ID }}/${{ env.AR_REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
             --cpu=2 \
             --memory=4Gi \
             --timeout=300s \

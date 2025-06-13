@@ -30,26 +30,14 @@ VOICES = set()
 
 # Voice choices and presets
 CHOICES = {
-    '🇺🇸 🚺 Heart ❤️': 'af_heart',
-    '🇺🇸 🚺 Sky 🔥': 'af_sky',
-    '🇺🇸 🚺 Nicole 🎧': 'af_nicole',
-    '🇺🇸 🚺 Aoede': 'af_aoede',
-    '🇺🇸 🚺 Kore': 'af_kore',
-    '🇺🇸 🚺 Sarah': 'af_sarah',
-    '🇺🇸 🚺 Nova': 'af_nova',
-    '🇺🇸 🚺 Bella': 'af_bella',
-    '🇺🇸 🚺 Alloy': 'af_alloy',
-    '🇺🇸 🚺 Jessica': 'af_jessica',
-    '🇺🇸 🚺 River': 'af_river',
-    '🇺🇸 🚹 Michael': 'am_michael',
-    '🇺🇸 🚹 Fenrir': 'am_fenrir',
-    '🇬🇧 🚹 Daniel': 'bm_daniel',
+    'af_sky': 'af_sky',
+    'af_heart': 'af_heart'
 }
 
 # Official voice presets
 VOICE_PRESETS = {
     'literature': {
-        'voice': 'af_heart',
+        'voice': 'af_sky',
         'speed': 1.1,
         'breathiness': 0.1,
         'tenseness': 0.1,
@@ -57,7 +45,7 @@ VOICE_PRESETS = {
         'sultry': 0.1
     },
     'articles': {
-        'voice': 'af_sky',
+        'voice': 'af_heart',
         'speed': 1.0,
         'breathiness': 0.15,
         'tenseness': 0.5,

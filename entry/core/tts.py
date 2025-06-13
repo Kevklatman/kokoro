@@ -31,7 +31,7 @@ def select_voice_and_preset(
     Priority:
       1. If preset_name is given and valid, use preset (voice and params).
       2. If requested_voice is given, use it with no preset.
-      3. If neither is given, use Bella for fiction, Sky for non-fiction (official presets).
+      3. If neither is given, use af_heart for fiction (literature) and af_sky for non-fiction (articles).
     Returns (voice_id, emotion_preset_dict or None)
     """
     voice_presets = get_voice_presets()
@@ -39,8 +39,8 @@ def select_voice_and_preset(
     # ENFORCE: Always use preset values for literature (fiction) and articles (non-fiction)
     if fiction is not None:
         if fiction:
-            # Literature: Bella preset (override everything)
-            return 'af_heart', {
+            # Literature: af_heart preset (override everything)
+            return 'af_sky', {
                 'speed': 1.1,
                 'breathiness': 0,
                 'tenseness': 0,
@@ -48,8 +48,8 @@ def select_voice_and_preset(
                 'sultry': 0
             }
         else:
-            # Articles: Sky preset (override everything)
-            return 'af_sky', {
+            # Articles: af_sky preset (override everything)
+            return 'af_heart', {
                 'speed': 1.0,
                 'breathiness': 0,
                 'tenseness': 0,
@@ -70,8 +70,8 @@ def select_voice_and_preset(
     if requested_voice:
         return requested_voice, None
     
-    # Fallback: default
-    return 'af_sky', None
+    # Fallback: default to af_sky
+    return 'af_heart', None
 
 
 def forward_gpu(ps, ref_s, speed):

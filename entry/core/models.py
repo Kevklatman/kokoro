@@ -95,7 +95,9 @@ def initialize_models(force_online=False):
         if cuda_available:
             models[True] = KModel(models_dir=settings.models_dir).to('cuda').eval()
     except Exception as e:
-        logger.error(f"Error initializing models: {e}")
+        import traceback
+        logger.error(f"Error initializing models: {str(e)}")
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
         raise
     finally:
         # Restore original offline mode setting

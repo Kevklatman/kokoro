@@ -216,7 +216,7 @@ class KPipeline:
 
     """
     load_voice is a helper function that lazily downloads and loads a voice:
-    Single voice can be requested (e.g. 'af_bella') or multiple voices (e.g. 'af_bella,af_jessica').
+    Single voice can be requested (e.g. 'af_heart') or multiple voices (e.g. 'af_heart,af_sky').
     If multiple voices are requested, they are averaged.
     Delimiter is optional and defaults to ','.
     """

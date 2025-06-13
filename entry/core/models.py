@@ -49,7 +49,7 @@ CHOICES = {
 # Official voice presets
 VOICE_PRESETS = {
     'literature': {
-        'voice': 'af_bella',
+        'voice': 'af_heart',
         'speed': 1.1,
         'breathiness': 0.1,
         'tenseness': 0.1,

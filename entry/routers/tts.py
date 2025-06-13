@@ -106,7 +106,7 @@ async def batch_text_to_speech(request: TTSBatchRequest):
             # Apply presets based on fiction flag
             if is_fiction:
                 # Bella preset for literature
-                voice = 'af_bella'
+                voice = 'af_heart'
                 speed = 1.1
                 breathiness = 0.1
                 tenseness = 0.1

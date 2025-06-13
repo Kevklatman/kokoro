@@ -26,11 +26,16 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+nginx-kokoro.conf
+start-dev-server.sh
+
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+
+.env.dev
 
 # Installer logs
 pip-log.txt

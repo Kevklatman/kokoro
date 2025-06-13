@@ -30,6 +30,7 @@ class Settings:
         
         # Hugging Face
         self.hf_token = os.getenv("HF_TOKEN", "")
+        self.offline_mode = os.getenv("OFFLINE_MODE", "False").lower() in ("true", "1", "t")
         
         # Set models directory based on availability
         self._setup_models_dir()

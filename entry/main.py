@@ -6,11 +6,11 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+from loguru import logger
 
 from entry.config import get_settings
 from entry.routers import tts, jobs, voices, streams
 from entry.core.models import initialize_models
-
 
 def create_app() -> FastAPI:
     """Create and configure FastAPI application"""
@@ -35,7 +35,18 @@ def create_app() -> FastAPI:
     # Initialize models on startup
     @app.on_event("startup")
     async def startup_event():
-        initialize_models()
+        """Initialize models on startup"""
+        # Check if this is running in a container (typically means first deployment)
+        in_container = os.path.exists("/.dockerenv")
+        
+        # Force online mode for initial setup if not running in dev environment
+        force_online = in_container and settings.env != "development"
+        
+        # Log the initialization mode
+        logger.info(f"Initializing models (force_online={force_online}, offline_mode={settings.offline_mode})")
+        
+        # Initialize models with potential online fallback
+        initialize_models(force_online=force_online)
 
     # Include routers
     app.include_router(tts.router, prefix="/tts", tags=["TTS"])

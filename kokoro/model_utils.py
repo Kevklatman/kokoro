@@ -6,7 +6,17 @@ from huggingface_hub import hf_hub_download
 from huggingface_hub.utils import HfHubHTTPError
 from loguru import logger
 
-def cached_hub_download(repo_id, filename, models_dir=None, **kwargs):
+# Try to get settings, but don't fail if not available
+try:
+    from entry.config import get_settings
+    settings = get_settings()
+except (ImportError, AttributeError):
+    # Create a dummy settings object with default values
+    class DummySettings:
+        offline_mode = False
+    settings = DummySettings()
+
+def cached_hub_download(repo_id, filename, models_dir=None, offline_mode=None, **kwargs):
     """
     Download a file from Hugging Face Hub with local caching priority.
     Always checks the local models_dir first before making API calls.
@@ -45,6 +55,9 @@ def cached_hub_download(repo_id, filename, models_dir=None, **kwargs):
                 logger.info(f"Using cached voice file: {voice_path}")
                 return voice_path
     
+    # Determine if we're in offline mode
+    is_offline = offline_mode if offline_mode is not None else settings.offline_mode
+    
     # Try to download with local_files_only first to avoid API calls
     try:
         return hf_hub_download(
@@ -54,13 +67,16 @@ def cached_hub_download(repo_id, filename, models_dir=None, **kwargs):
             **kwargs
         )
     except (HfHubHTTPError, FileNotFoundError, ValueError) as e:
+        if is_offline:
+            logger.error(f"Failed to find {filename} locally and offline mode is enabled. Cannot download from Hugging Face.")
+            raise RuntimeError(f"File {filename} not found locally and offline mode is enabled. Ensure all required files are present in the models directory.")
         logger.debug(f"File not found locally, will try to download: {e}")
     
-    # If local_files_only fails, try to download from HF
+    # If local_files_only fails and we're not in offline mode, try to download from HF
     try:
         logger.info(f"Downloading {filename} from Hugging Face ({repo_id})")
         return hf_hub_download(repo_id=repo_id, filename=filename, **kwargs)
     except HfHubHTTPError as e:
         if e.response.status_code == 429:
-            logger.error(f"Rate limit hit (429). Consider using offline mode or waiting.")
+            logger.error(f"Rate limit hit (429). Consider enabling offline mode and ensuring all models are downloaded beforehand.")
         raise

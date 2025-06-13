@@ -35,7 +35,6 @@ RUN mkdir -p /app/models/Kokoro-82M /app/models/voices
 # Copy model files first
 COPY models/config.json /app/models/config.json
 COPY models/config.json /app/models/Kokoro-82M/config.json
-COPY models/kokoro-timing-improved.pth /app/models/Kokoro-82M/kokoro-v1_0.pth
 COPY models/voices/*.pt /app/models/voices/
 
 # Copy the rest of the project

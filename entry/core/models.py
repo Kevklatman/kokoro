@@ -66,9 +66,9 @@ def initialize_models():
     
     # Initialize models
     cuda_available = torch.cuda.is_available() and settings.cuda_available
-    models[False] = KModel().to('cpu').eval()
+    models[False] = KModel(models_dir=settings.models_dir).to('cpu').eval()
     if cuda_available:
-        models[True] = KModel().to('cuda').eval()
+        models[True] = KModel(models_dir=settings.models_dir).to('cuda').eval()
     
     # Initialize pipelines
     for lang_code in 'ab':

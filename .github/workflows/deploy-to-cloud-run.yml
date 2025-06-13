@@ -11,7 +11,6 @@ jobs:
     env:
       PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
       GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
-      HF_TOKEN: ${{ secrets.HF_TOKEN }}
       GCP_REGION: ${{ secrets.GCP_REGION }}
     
     steps:
@@ -30,7 +29,7 @@ jobs:
           
       - name: Build and push Docker image
         run: |
-          docker build --build-arg HF_TOKEN=${{ env.HF_TOKEN }} -t gcr.io/${{ env.PROJECT_ID }}/apiforswifttts:${{ github.sha }} .
+          docker build -t gcr.io/${{ env.PROJECT_ID }}/apiforswifttts:${{ github.sha }} .
           docker push gcr.io/${{ env.PROJECT_ID }}/apiforswifttts:${{ github.sha }}
           
       - name: Deploy to Cloud Run
@@ -45,7 +44,7 @@ jobs:
             --port=8080 \
             --min-instances=0 \
             --max-instances=10 \
-            --set-env-vars=OFFLINE_MODE=true,HF_TOKEN=${{ env.HF_TOKEN }} \
+            --set-env-vars=OFFLINE_MODE=true \
             --health-check-path=/health \
             --readiness-check-path=/ready \
             --region=${{ env.GCP_REGION }} \

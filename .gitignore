@@ -201,6 +201,5 @@ LICENSE
 models/kokoro-v1_0.pth
 
 # Voice model files
-models/voices/*.pt
 
 # ... existing code ...

@@ -5,10 +5,12 @@ import os
 import sys
 import asyncio
 import threading
+import uvicorn
 from typing import Optional
 from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
+from dotenv import load_dotenv
 
 from entry.config import get_settings
 from entry.routers import tts, jobs, voices, streams
@@ -67,7 +69,6 @@ def create_app() -> FastAPI:
                 # Don't set MODELS_LOADED to True if there's an error
         
         # Start initialization in a background thread
-        import threading
         thread = threading.Thread(target=init_models_thread)
         thread.daemon = True
         thread.start()

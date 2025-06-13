@@ -32,9 +32,6 @@ RUN mkdir -p ${STREAMS_DIR}
 # Copy the project first for downloading models
 COPY . /app/
 
-# Make sure the scripts directory is executable
-RUN chmod +x /app/scripts/*.py
-
 # Create models directory and copy model files
 RUN mkdir -p /app/models/Kokoro-82M
 COPY models/config.json /app/models/config.json

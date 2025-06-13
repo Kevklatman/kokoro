@@ -2,15 +2,20 @@
 FastAPI Application Entry Point
 """
 import os
-import uvicorn
-from fastapi import FastAPI
+import sys
+import asyncio
+import threading
+from typing import Optional
+from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
 from loguru import logger
 
 from entry.config import get_settings
 from entry.routers import tts, jobs, voices, streams
 from entry.core.models import initialize_models
+
+# Global flag to track if models are loaded
+MODELS_LOADED = False
 
 def create_app() -> FastAPI:
     """Create and configure FastAPI application"""
@@ -36,23 +41,57 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     async def startup_event():
         """Initialize models on startup"""
-        # Check if this is running in a container (typically means first deployment)
-        in_container = os.path.exists("/.dockerenv")
+        global MODELS_LOADED
         
-        # Force online mode for initial setup if not running in dev environment
-        force_online = in_container and settings.env != "development"
+        logger.info("Initializing models - startup process beginning")
         
-        # Log the initialization mode
-        logger.info(f"Initializing models (force_online={force_online}, offline_mode={settings.offline_mode})")
+        # For Cloud Run, we need to make initialization non-blocking
+        # to allow the health check endpoint to respond quickly
+        def init_models_thread():
+            global MODELS_LOADED
+            try:
+                # Determine if we need to force online mode for container initialization
+                force_online = False
+                if os.environ.get('CONTAINER_ENV', '').lower() == 'true' or \
+                   os.environ.get('K_SERVICE', '').lower() != '':
+                    force_online = not os.path.exists(os.path.join(os.getcwd(), 'models', 'Kokoro-82M'))
+                    if force_online:
+                        logger.info("Container environment detected, forcing online mode for first run")
+                
+                logger.info("Loading models in background thread")
+                initialize_models(force_online=force_online)
+                logger.info("Models loaded successfully")
+                MODELS_LOADED = True
+            except Exception as e:
+                logger.error(f"Error loading models: {e}")
+                # Don't set MODELS_LOADED to True if there's an error
         
-        # Initialize models with potential online fallback
-        initialize_models(force_online=force_online)
+        # Start initialization in a background thread
+        import threading
+        thread = threading.Thread(target=init_models_thread)
+        thread.daemon = True
+        thread.start()
 
+    # Health check endpoints for Cloud Run
+    @app.get("/health", tags=["Health"])
+    async def health_check():
+        """Basic health check that always returns 200 OK (for initial container startup)"""
+        return {"status": "ok", "message": "Service is running"}
+    
+    @app.get("/ready", tags=["Health"])
+    async def readiness_check(response: Response):
+        """Readiness check that returns 200 only when models are fully loaded"""
+        if MODELS_LOADED:
+            return {"status": "ready", "message": "Models loaded and ready"}
+        else:
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+            return {"status": "loading", "message": "Models are still loading"}
+    
     # Include routers
     app.include_router(tts.router, prefix="/tts", tags=["TTS"])
-    app.include_router(jobs.router, prefix="/tts", tags=["Jobs"])
-    app.include_router(voices.router, tags=["Voices"])
-    app.include_router(streams.router, prefix="/streams", tags=["Streaming"])
+    app.include_router(jobs.router, prefix="/jobs", tags=["Jobs"])
+    app.include_router(voices.router, prefix="/voices", tags=["Voices"])
+    app.include_router(streams.router, prefix="/streams", tags=["Streams"])
 
     @app.get("/")
     async def root():

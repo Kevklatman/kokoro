@@ -35,18 +35,15 @@ COPY . /app/
 # Make sure the scripts directory is executable
 RUN chmod +x /app/scripts/*.py
 
-# Create models directory
-RUN mkdir -p /app/models
+# Create models directory and copy model files
+RUN mkdir -p /app/models/Kokoro-82M
+COPY models/config.json /app/models/config.json
+COPY models/config.json /app/models/Kokoro-82M/config.json
+COPY models/kokoro-timing-improved.pth /app/models/Kokoro-82M/kokoro-v1_0.pth
 
-# Download models during build (set HF_TOKEN as build arg if needed)
-ARG HF_TOKEN=
-RUN if [ -n "$HF_TOKEN" ]; then \
-    echo "Using provided Hugging Face token"; \
-    HF_TOKEN=$HF_TOKEN MODELS_DIR=/app/models python3 /app/scripts/download_models.py; \
-    else \
-    echo "No Hugging Face token provided, using anonymous downloads"; \
-    MODELS_DIR=/app/models python3 /app/scripts/download_models.py; \
-    fi
+# Create voices directory and copy voice files
+RUN mkdir -p /app/models/voices
+COPY models/voices/*.pt /app/models/voices/
 
 # Expose the configured port
 EXPOSE ${PORT}

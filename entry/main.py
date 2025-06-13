@@ -6,18 +6,22 @@ import sys
 import asyncio
 import threading
 import uvicorn
-from typing import Optional
-from fastapi import FastAPI, Response, status
+from typing import Optional, Dict
+from fastapi import FastAPI, Response, status, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from dotenv import load_dotenv
 
 from entry.config import get_settings
 from entry.routers import tts, jobs, voices, streams
-from entry.core.models import initialize_models
+from entry.core.models import initialize_models, get_voices
 
 # Global flag to track if models are loaded
 MODELS_LOADED = False
+
+# Global state
+initialized = False
+initialization_error = None
 
 def create_app() -> FastAPI:
     """Create and configure FastAPI application"""
@@ -43,7 +47,7 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     async def startup_event():
         """Initialize models on startup"""
-        global MODELS_LOADED
+        global MODELS_LOADED, initialized, initialization_error
         
         logger.info("Initializing models - startup process beginning")
         
@@ -77,7 +81,11 @@ def create_app() -> FastAPI:
     @app.get("/health", tags=["Health"])
     async def health_check():
         """Basic health check that always returns 200 OK (for initial container startup)"""
-        return {"status": "ok", "message": "Service is running"}
+        if not initialized:
+            return {"status": "initializing"}
+        if initialization_error:
+            return {"status": "error", "error": initialization_error}
+        return {"status": "healthy", "voices": list(get_voices())}
     
     @app.get("/ready", tags=["Health"])
     async def readiness_check(response: Response):
@@ -97,6 +105,21 @@ def create_app() -> FastAPI:
     @app.get("/")
     async def root():
         return {"message": "Kokoro TTS API is running. Visit /docs for API documentation."}
+
+    @app.middleware("http")
+    async def check_initialization(request: Request, call_next):
+        """Middleware to check if application is initialized"""
+        if not initialized:
+            if initialization_error:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Service unavailable: {initialization_error}"
+                )
+            raise HTTPException(
+                status_code=503,
+                detail="Service is still initializing"
+            )
+        return await call_next(request)
 
     return app
 

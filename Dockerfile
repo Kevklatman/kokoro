@@ -29,18 +29,17 @@ RUN pip3 install -r requirements.txt
 # Create necessary directories
 RUN mkdir -p ${STREAMS_DIR}
 
-# Copy the project first for downloading models
-COPY . /app/
+# Create models directory structure
+RUN mkdir -p /app/models/Kokoro-82M /app/models/voices
 
-# Create models directory and copy model files
-RUN mkdir -p /app/models/Kokoro-82M
+# Copy model files first
 COPY models/config.json /app/models/config.json
 COPY models/config.json /app/models/Kokoro-82M/config.json
 COPY models/kokoro-timing-improved.pth /app/models/Kokoro-82M/kokoro-v1_0.pth
-
-# Create voices directory and copy voice files
-RUN mkdir -p /app/models/voices
 COPY models/voices/*.pt /app/models/voices/
+
+# Copy the rest of the project
+COPY . /app/
 
 # Expose the configured port
 EXPOSE ${PORT}

@@ -50,9 +50,25 @@ def create_app() -> FastAPI:
     return app
 
 
+# Create the application instance
 app = create_app()
 
+# Always ensure streams directory exists
+streams_dir = os.getenv("STREAMS_DIR", "streams")
+os.makedirs(streams_dir, exist_ok=True)
+
+# Only used when running this file directly (development mode)
 if __name__ == "__main__":
-    # Create streams directory if it doesn't exist
-    os.makedirs("streams", exist_ok=True)
-    uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=False)
+    # Get configuration from environment variables
+    port = int(os.getenv("PORT", 8080))
+    host = os.getenv("HOST", "0.0.0.0")
+    reload_mode = os.getenv("RELOAD", "False").lower() in ("true", "1", "t")
+    
+    print(f"Starting development server at {host}:{port} (reload={reload_mode})")
+    uvicorn.run("entry.main:app", host=host, port=port, reload=reload_mode)
+    
+    # NOTE: For production, this block will not be executed.
+    # Instead, the container orchestration should:
+    # 1. Import the 'app' object directly
+    # 2. Set up proper process management
+    # 3. Configure via environment variables

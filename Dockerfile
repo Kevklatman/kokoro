@@ -1,12 +1,14 @@
 # Use an official Python base image
 FROM python:3.10-slim
 
-# Set environment variables
 # Set environment variables for production
 ENV ENV=production
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-
+ENV PORT=8080
+ENV HOST=0.0.0.0
+ENV RELOAD=False
+ENV STREAMS_DIR=/app/streams
 
 # Set work directory
 WORKDIR /app
@@ -15,9 +17,6 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     build-essential \
     ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -26,17 +25,17 @@ COPY requirements.txt .
 RUN pip3 install --upgrade pip
 RUN pip3 install -r requirements.txt
 
+# Create necessary directories
+RUN mkdir -p ${STREAMS_DIR}
+
 # Copy models directory with proper structure
 COPY models/ /app/models/
 
-
-# Copy your code
+# Copy application code
 COPY . .
 
-# Expose port (Cloud Run uses 8080 by default)
-EXPOSE 8080
+# Expose the configured port
+EXPOSE ${PORT}
 
-
-
-# Start the FastAPI app with Uvicorn
-CMD uvicorn entry.main:app --host 0.0.0.0 --port $PORT --workers 1
+# Use Gunicorn with Uvicorn workers for production
+CMD gunicorn entry.main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind ${HOST}:${PORT}

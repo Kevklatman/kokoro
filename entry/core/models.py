@@ -2,7 +2,22 @@
 TTS model management and initialization
 """
 import os
+import sys
 import torch
+from typing import Dict
+
+# Configure logger with fallback to print
+try:
+    from loguru import logger
+except ImportError:
+    # Create a simple logger fallback using print
+    class PrintLogger:
+        def info(self, msg): print(f"INFO: {msg}")
+        def error(self, msg): print(f"ERROR: {msg}")
+        def warning(self, msg): print(f"WARNING: {msg}")
+        def debug(self, msg): print(f"DEBUG: {msg}")
+    logger = PrintLogger()
+
 from huggingface_hub import login
 from kokoro import KModel, KPipeline
 from entry.config import get_settings
@@ -52,7 +67,7 @@ VOICE_PRESETS = {
 }
 
 
-def initialize_models():
+def initialize_models(force_online=False):
     """Initialize TTS models and pipelines"""
     global models, pipelines, VOICES
     
@@ -66,9 +81,25 @@ def initialize_models():
     
     # Initialize models
     cuda_available = torch.cuda.is_available() and settings.cuda_available
-    models[False] = KModel(models_dir=settings.models_dir).to('cpu').eval()
-    if cuda_available:
-        models[True] = KModel(models_dir=settings.models_dir).to('cuda').eval()
+    
+    # Save original offline mode setting
+    original_offline_mode = settings.offline_mode
+    
+    try:
+        # Temporarily disable offline mode for first-time initialization if needed
+        if force_online:
+            logger.info("Temporarily enabling online mode for model initialization")
+            settings.offline_mode = False
+            
+        models[False] = KModel(models_dir=settings.models_dir).to('cpu').eval()
+        if cuda_available:
+            models[True] = KModel(models_dir=settings.models_dir).to('cuda').eval()
+    except Exception as e:
+        logger.error(f"Error initializing models: {e}")
+        raise
+    finally:
+        # Restore original offline mode setting
+        settings.offline_mode = original_offline_mode
     
     # Initialize pipelines
     for lang_code in 'ab':

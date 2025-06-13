@@ -1,0 +1,53 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - main  # or your default branch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      GCP_REGION: ${{ secrets.GCP_REGION }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          service_account_key: ${{ env.GCP_SA_KEY }}
+          
+      - name: Authenticate Docker
+        run: |
+          gcloud auth configure-docker
+          
+      - name: Build and push Docker image
+        run: |
+          docker build --build-arg HF_TOKEN=${{ env.HF_TOKEN }} -t gcr.io/${{ env.PROJECT_ID }}/apiforswifttts:${{ github.sha }} .
+          docker push gcr.io/${{ env.PROJECT_ID }}/apiforswifttts:${{ github.sha }}
+          
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy apiforswifttts \
+            --image=gcr.io/${{ env.PROJECT_ID }}/apiforswifttts:${{ github.sha }} \
+            --cpu=2 \
+            --memory=4Gi \
+            --timeout=300s \
+            --no-cpu-throttling \
+            --startup-cpu-boost \
+            --port=8080 \
+            --min-instances=0 \
+            --max-instances=10 \
+            --set-env-vars=OFFLINE_MODE=true,HF_TOKEN=${{ env.HF_TOKEN }} \
+            --health-check-path=/health \
+            --readiness-check-path=/ready \
+            --region=${{ env.GCP_REGION }} \
+            --platform=managed \
+            --allow-unauthenticated

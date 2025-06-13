@@ -54,7 +54,7 @@ def create_app() -> FastAPI:
         # For Cloud Run, we need to make initialization non-blocking
         # to allow the health check endpoint to respond quickly
         def init_models_thread():
-            global MODELS_LOADED
+            global MODELS_LOADED, initialized
             try:
                 # Determine if we need to force online mode for container initialization
                 force_online = False
@@ -68,9 +68,11 @@ def create_app() -> FastAPI:
                 initialize_models(force_online=force_online)
                 logger.info("Models loaded successfully")
                 MODELS_LOADED = True
+                initialized = True  # Set initialized flag when models are loaded
             except Exception as e:
                 logger.error(f"Error loading models: {e}")
                 # Don't set MODELS_LOADED to True if there's an error
+                initialization_error = str(e)  # Set error message
         
         # Start initialization in a background thread
         thread = threading.Thread(target=init_models_thread)

@@ -40,7 +40,7 @@ def select_voice_and_preset(
     if fiction is not None:
         if fiction:
             # Literature: Bella preset (override everything)
-            return 'af_bella', {
+            return 'af_heart', {
                 'speed': 1.1,
                 'breathiness': 0,
                 'tenseness': 0,

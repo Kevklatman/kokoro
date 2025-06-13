@@ -9,6 +9,7 @@ ENV PORT=8080
 ENV HOST=0.0.0.0
 ENV RELOAD=False
 ENV STREAMS_DIR=/app/streams
+ENV OFFLINE_MODE=true
 
 # Set work directory
 WORKDIR /app
@@ -28,11 +29,24 @@ RUN pip3 install -r requirements.txt
 # Create necessary directories
 RUN mkdir -p ${STREAMS_DIR}
 
-# Copy models directory with proper structure
-COPY models/ /app/models/
+# Copy the project first for downloading models
+COPY . /app/
 
-# Copy application code
-COPY . .
+# Make sure the scripts directory is executable
+RUN chmod +x /app/scripts/*.py
+
+# Create models directory
+RUN mkdir -p /app/models
+
+# Download models during build (set HF_TOKEN as build arg if needed)
+ARG HF_TOKEN=
+RUN if [ -n "$HF_TOKEN" ]; then \
+    echo "Using provided Hugging Face token"; \
+    HF_TOKEN=$HF_TOKEN MODELS_DIR=/app/models python3 /app/scripts/download_models.py; \
+    else \
+    echo "No Hugging Face token provided, using anonymous downloads"; \
+    MODELS_DIR=/app/models python3 /app/scripts/download_models.py; \
+    fi
 
 # Expose the configured port
 EXPOSE ${PORT}

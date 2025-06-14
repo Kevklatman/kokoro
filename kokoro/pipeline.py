@@ -169,6 +169,7 @@ class KPipeline:
             self.g2p = G2PCache(g2p_obj)
 
     def load_single_voice(self, voice: str):
+        """Load a single voice from the voices directory"""
         if voice in self.voices:
             return self.voices[voice]
             
@@ -210,22 +211,34 @@ class KPipeline:
                 v = LANG_CODES.get(voice, voice)
                 p = LANG_CODES.get(self.lang_code, self.lang_code)
                 logger.warning(f'Language mismatch, loading {v} voice into {p} pipeline.')
-        # Multi-stage loading approach to handle different PyTorch versions and formats
-        for attempt, config in enumerate([
-            {"weights_only": True, "map_location": 'cpu'},  # Safest option first
-            {"weights_only": False, "map_location": 'cpu'},  # Less safe but needed for some models
-            {"map_location": 'cpu'}  # Basic compatibility mode
-        ]):
+            
+        # Log PyTorch version for visibility
+        logger.info(f"Loading voice with PyTorch {torch.__version__}")
+        
+        # Multi-stage loading approach for PyTorch 2.7 compatibility
+        pack = None
+        try:
+            # First try with weights_only=False and map_location (most compatible with PyTorch 2.7)
+            logger.info("Attempting to load voice with map_location='cpu', weights_only=False")
+            pack = torch.load(f, map_location='cpu', weights_only=False)
+            logger.info("Successfully loaded voice with weights_only=False")
+        except (RuntimeError, TypeError) as e:
+            logger.warning(f"Failed to load voice with weights_only=False: {e}")
             try:
-                logger.debug(f"Voice loading attempt {attempt+1} with config: {config}")
-                pack = torch.load(f, **config)
-                logger.info(f"Successfully loaded voice with config: {config}")
-                break
-            except Exception as e:
-                logger.warning(f"Failed to load voice (attempt {attempt+1}): {str(e)}")
-                if attempt == 2:  # Last attempt failed
-                    logger.error(f"All loading attempts failed for voice {voice}")
-                    raise
+                # Then try with weights_only=True (safer but might miss some layers)
+                logger.info("Attempting to load voice with map_location='cpu', weights_only=True")
+                pack = torch.load(f, map_location='cpu', weights_only=True)
+                logger.info("Successfully loaded voice with weights_only=True")
+            except Exception as e2:
+                # Last resort, try basic loading with just map_location
+                logger.warning(f"Failed with both loading methods, trying basic loading: {e2}")
+                logger.info("Attempting basic compatibility mode for voice loading")
+                pack = torch.load(f, map_location='cpu')
+                logger.info("Successfully loaded voice with basic loading")
+        
+        if pack is None:
+            raise RuntimeError(f"Failed to load voice {voice} with any loading method")
+            
         self.voices[voice] = pack
         return pack
 

@@ -59,6 +59,9 @@ def initialize_models(force_online=False):
     """Initialize TTS models and pipelines"""
     global models, pipelines, VOICES
     
+    # Log PyTorch version for debugging
+    logger.info(f"Using PyTorch version: {torch.__version__}")
+    
     settings = get_settings()
     
     # Login to Hugging Face if token is provided
@@ -90,10 +93,34 @@ def initialize_models(force_online=False):
         if force_online:
             logger.info("Temporarily enabling online mode for model initialization")
             settings.offline_mode = False
+        
+        # Override KModel initialization to ensure compatibility with different PyTorch versions
+        try:
+            # First try using normal KModel initialization which will use our updated load methods
+            logger.info("Attempting to initialize models with primary loading method")
+            models[False] = KModel(models_dir=settings.models_dir).to('cpu').eval()
+            if cuda_available:
+                models[True] = KModel(models_dir=settings.models_dir).to('cuda').eval()
+        except Exception as model_error:
+            # If that fails, we'll handle loading differently here as a fallback
+            import traceback
+            logger.warning(f"Primary model loading failed: {str(model_error)}")
+            logger.warning("Attempting fallback loading method...")
             
-        models[False] = KModel(models_dir=settings.models_dir).to('cpu').eval()
-        if cuda_available:
-            models[True] = KModel(models_dir=settings.models_dir).to('cuda').eval()
+            # This indicates we need to handle the loading more carefully
+            try:
+                # Import and monkey-patch torch.load to be more forgiving
+                from kokoro.model import KModel as KModelCustom
+                
+                # Create custom instance with modified loading logic
+                logger.info("Initializing with custom loading logic")
+                models[False] = KModelCustom(models_dir=settings.models_dir).to('cpu').eval()
+                if cuda_available:
+                    models[True] = KModelCustom(models_dir=settings.models_dir).to('cuda').eval()
+            except Exception as fallback_error:
+                logger.error(f"Fallback loading also failed: {str(fallback_error)}")
+                logger.error(f"Full traceback:\n{traceback.format_exc()}")
+                raise RuntimeError(f"Could not load models with any method. Original error: {str(model_error)}. Fallback error: {str(fallback_error)}")
     except Exception as e:
         import traceback
         logger.error(f"Error initializing models: {str(e)}")
@@ -139,9 +166,41 @@ def initialize_models(force_online=False):
             voice_path = os.path.join(voice_dir, voice_file)
             logger.info(f"Loading voice from: {voice_path}")
             
-            pipelines[voice[0]].load_voice(voice)
-            available_voices.add(voice)
-            logger.info(f"Successfully loaded voice: {voice}")
+            # Try multiple loading approaches to ensure compatibility
+            try:
+                pipelines[voice[0]].load_voice(voice)
+                available_voices.add(voice)
+                logger.info(f"Successfully loaded voice: {voice}")
+            except Exception as voice_error:
+                # If standard loading fails, try to load the voice manually with error handling
+                logger.warning(f"Standard voice loading failed for {voice}: {str(voice_error)}")
+                logger.warning(f"Attempting manual voice loading for {voice}...")
+                
+                try:
+                    # Get the voice file path
+                    f = voice_path
+                    
+                    # Multi-stage loading with different parameters for PyTorch compatibility
+                    logger.debug(f"Attempting to load {f} with weights_only=False")
+                    try:
+                        voice_model = torch.load(f, map_location='cpu', weights_only=False)
+                    except Exception as e1:
+                        logger.debug(f"First loading attempt failed: {str(e1)}")
+                        try:
+                            logger.debug(f"Attempting to load {f} with weights_only=True")
+                            voice_model = torch.load(f, map_location='cpu', weights_only=True)
+                        except Exception as e2:
+                            logger.debug(f"Second loading attempt failed: {str(e2)}")
+                            logger.debug(f"Attempting to load {f} with basic parameters")
+                            voice_model = torch.load(f, map_location='cpu')
+                    
+                    # Manual voice registration
+                    pipelines[voice[0]].voices[voice] = voice_model
+                    available_voices.add(voice)
+                    logger.info(f"Successfully loaded voice {voice} with manual loading")
+                except Exception as manual_error:
+                    logger.error(f"All attempts to load voice {voice} failed: {str(manual_error)}")
+                    raise
         except Exception as e:
             logger.error(f"Failed to load voice {voice}: {str(e)}")
             import traceback

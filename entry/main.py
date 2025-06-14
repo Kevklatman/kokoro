@@ -54,7 +54,7 @@ def create_app() -> FastAPI:
         # For Cloud Run, we need to make initialization non-blocking
         # to allow the health check endpoint to respond quickly
         def init_models_thread():
-            global MODELS_LOADED, initialized
+            global MODELS_LOADED, initialized, initialization_error
             try:
                 # Determine if we need to force online mode for container initialization
                 force_online = False
@@ -69,10 +69,12 @@ def create_app() -> FastAPI:
                 logger.info("Models loaded successfully")
                 MODELS_LOADED = True
                 initialized = True  # Set initialized flag when models are loaded
+                initialization_error = None  # Clear any previous errors
             except Exception as e:
                 logger.error(f"Error loading models: {e}")
-                # Don't set MODELS_LOADED to True if there's an error
                 initialization_error = str(e)  # Set error message
+                MODELS_LOADED = False
+                initialized = False
         
         # Start initialization in a background thread
         thread = threading.Thread(target=init_models_thread)
@@ -83,20 +85,22 @@ def create_app() -> FastAPI:
     @app.get("/health", tags=["Health"])
     async def health_check():
         """Basic health check that always returns 200 OK (for initial container startup)"""
-        if not initialized:
-            return {"status": "initializing"}
         if initialization_error:
             return {"status": "error", "error": initialization_error}
+        if not initialized:
+            return {"status": "initializing"}
         return {"status": "healthy", "voices": list(get_voices())}
     
     @app.get("/ready", tags=["Health"])
     async def readiness_check(response: Response):
         """Readiness check that returns 200 only when models are fully loaded"""
-        if MODELS_LOADED:
-            return {"status": "ready", "message": "Models loaded and ready"}
-        else:
+        if initialization_error:
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+            return {"status": "error", "error": initialization_error}
+        if not initialized:
             response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
             return {"status": "loading", "message": "Models are still loading"}
+        return {"status": "ready", "message": "Models loaded and ready"}
     
     # Include routers
     app.include_router(tts.router, prefix="/tts", tags=["TTS"])
@@ -111,6 +115,10 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def check_initialization(request: Request, call_next):
         """Middleware to check if application is initialized"""
+        # Allow health checks to pass through
+        if request.url.path in ["/health", "/ready"]:
+            return await call_next(request)
+            
         if not initialized:
             if initialization_error:
                 raise HTTPException(

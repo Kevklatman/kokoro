@@ -67,7 +67,17 @@ class KModel(torch.nn.Module):
         )
         if not model:
             model = cached_hub_download(repo_id=repo_id, filename=KModel.MODEL_NAMES[repo_id], models_dir=models_dir)
-        for key, state_dict in torch.load(model, map_location='cpu', weights_only=False).items():
+        
+        # Try to load the model with weights_only=True first (safer), fall back to False if needed
+        try:
+            logger.info("Attempting to load model with weights_only=True (safer option)")
+            model_data = torch.load(model, map_location='cpu', weights_only=True)
+        except Exception as e:
+            logger.warning(f"Failed to load model with weights_only=True: {str(e)}")
+            logger.warning("Attempting to load with weights_only=False. This requires trusted model files.")
+            model_data = torch.load(model, map_location='cpu', weights_only=False)
+            
+        for key, state_dict in model_data.items():
             assert hasattr(self, key), key
             try:
                 getattr(self, key).load_state_dict(state_dict)

@@ -210,7 +210,14 @@ class KPipeline:
                 v = LANG_CODES.get(voice, voice)
                 p = LANG_CODES.get(self.lang_code, self.lang_code)
                 logger.warning(f'Language mismatch, loading {v} voice into {p} pipeline.')
-        pack = torch.load(f, weights_only=False)
+        try:
+            # First try with weights_only=True (safer option)
+            pack = torch.load(f, weights_only=True)
+        except Exception as e:
+            logger.warning(f"Failed to load voice with weights_only=True: {str(e)}")
+            logger.warning("Attempting to load with weights_only=False. This requires trusted voice files.")
+            # Fall back to weights_only=False only if necessary
+            pack = torch.load(f, weights_only=False)
         self.voices[voice] = pack
         return pack
 

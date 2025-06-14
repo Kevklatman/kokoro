@@ -81,7 +81,7 @@ spacy-legacy==3.0.12
 spacy-loggers==1.0.5
 srsly==2.5.1
 starlette==0.46.2
-sympy==1.14.0
+sympy==1.13.1
 thinc==8.3.6
 tokenizers==0.21.1
 tomlkit==0.13.2

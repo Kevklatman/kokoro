@@ -121,9 +121,19 @@ def create_app() -> FastAPI:
             
         if not initialized:
             if initialization_error:
+                # Format and truncate error message to prevent cutoff
+                error_msg = str(initialization_error)
+                if "weights_only" in error_msg:
+                    # Special handling for PyTorch 2.6 weights_only errors
+                    error_msg = "PyTorch 2.6 compatibility issue with model loading. The model was created with an older PyTorch version. Please restart the application to retry with fallback loading options."
+                
+                # Truncate if too long
+                if len(error_msg) > 200:
+                    error_msg = error_msg[:197] + "..."
+                    
                 raise HTTPException(
                     status_code=503,
-                    detail=f"Service unavailable: {initialization_error}"
+                    detail=f"Service unavailable: {error_msg}"
                 )
             raise HTTPException(
                 status_code=503,

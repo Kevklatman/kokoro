@@ -115,8 +115,8 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def check_initialization(request: Request, call_next):
         """Middleware to check if application is initialized"""
-        # Allow health checks to pass through
-        if request.url.path in ["/health", "/ready"]:
+        # Allow health checks and readiness checks to pass through
+        if request.url.path in ["/health", "/ready", "/docs", "/openapi.json", "/redoc"]:
             return await call_next(request)
             
         if not initialized:

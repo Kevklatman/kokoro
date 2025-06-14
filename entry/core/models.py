@@ -63,7 +63,15 @@ def initialize_models(force_online=False):
     
     # Login to Hugging Face if token is provided
     if settings.hf_token:
-        login(token=settings.hf_token)
+        logger.info("HF token found, attempting to login")
+        try:
+            login(token=settings.hf_token)
+            logger.info("Successfully logged into Hugging Face")
+        except Exception as e:
+            logger.error(f"Failed to login to Hugging Face: {str(e)}")
+            raise
+    else:
+        logger.warning("No HF token provided, will use public access")
     
     logger.info(f"Using models directory: {settings.models_dir}")
     

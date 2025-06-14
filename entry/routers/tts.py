@@ -13,6 +13,7 @@ from entry.core.tts import (
     generate_audio, generate_audio_batch, tokenize_text, 
     preprocess_text, select_voice_and_preset
 )
+from entry.core.models import get_settings
 from entry.utils.audio import audio_to_base64, create_wav_response, create_audio_response, optimize_response_size, audio_to_bytes
 from loguru import logger
 
@@ -53,11 +54,15 @@ async def text_to_speech(request: TTSRequest):
 
         preprocessed_text = preprocess_text(request.text)
 
+        # Use GPU if available based on settings
+        settings = get_settings()
+        use_gpu = settings.cuda_available
+        
         (sample_rate, audio_data), phonemes = generate_audio(
             preprocessed_text,
             selected_voice,
             speed,
-            request.use_gpu,
+            use_gpu,
             breathiness,
             tenseness,
             jitter,
@@ -121,8 +126,12 @@ async def batch_text_to_speech(request: TTSBatchRequest):
                 jitter = 0.3
                 sultry = 0.1
             
+            # Use GPU if available based on settings
+            settings = get_settings()
+            use_gpu = settings.cuda_available
+            
             (sample_rate, audio_data), _ = generate_audio(
-                text, voice, speed, request.use_gpu,
+                text, voice, speed, use_gpu,
                 breathiness, tenseness, jitter, sultry
             )
             results.append((sample_rate, audio_data))
@@ -187,11 +196,15 @@ async def text_to_speech_base64(request: TTSRequest):
 
         preprocessed_text = preprocess_text(request.text)
         
+        # Get GPU availability from settings
+        settings = get_settings()
+        use_gpu = settings.cuda_available
+        
         (sample_rate, audio_data), phonemes = generate_audio(
             preprocessed_text, 
             selected_voice,
             speed, 
-            request.use_gpu,
+            use_gpu,  # Use GPU if available based on settings
             breathiness,
             tenseness,
             jitter,

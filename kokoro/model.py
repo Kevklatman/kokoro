@@ -68,14 +68,23 @@ class KModel(torch.nn.Module):
         if not model:
             model = cached_hub_download(repo_id=repo_id, filename=KModel.MODEL_NAMES[repo_id], models_dir=models_dir)
         
-        # Try to load the model with weights_only=True first (safer), fall back to False if needed
-        try:
-            logger.info("Attempting to load model with weights_only=True (safer option)")
-            model_data = torch.load(model, map_location='cpu', weights_only=True)
-        except Exception as e:
-            logger.warning(f"Failed to load model with weights_only=True: {str(e)}")
-            logger.warning("Attempting to load with weights_only=False. This requires trusted model files.")
-            model_data = torch.load(model, map_location='cpu', weights_only=False)
+        # Multi-stage loading approach to handle different PyTorch versions and formats
+        model_data = None
+        for attempt, config in enumerate([
+            {"map_location": 'cpu', "weights_only": True},  # Safest option first
+            {"map_location": 'cpu', "weights_only": False},  # Less safe but needed for some models
+            {"map_location": 'cpu'}  # Basic compatibility mode
+        ]):
+            try:
+                logger.info(f"Model loading attempt {attempt+1} with config: {config}")
+                model_data = torch.load(model, **config)
+                logger.info(f"Successfully loaded model with config: {config}")
+                break
+            except Exception as e:
+                logger.warning(f"Failed to load model (attempt {attempt+1}): {str(e)}")
+                if attempt == 2:  # Last attempt failed
+                    logger.error("All loading attempts failed for model")
+                    raise
             
         for key, state_dict in model_data.items():
             assert hasattr(self, key), key

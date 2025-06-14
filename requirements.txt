@@ -85,7 +85,7 @@ sympy==1.14.0
 thinc==8.3.6
 tokenizers==0.21.1
 tomlkit==0.13.2
-torch==2.7.0
+torch==2.5.1
 tqdm==4.67.1
 transformers==4.51.3
 typer==0.15.3

@@ -55,10 +55,11 @@ def cached_hub_download(repo_id, filename, models_dir=None, offline_mode=None, *
                 logger.info(f"Using cached voice file: {voice_path}")
                 return voice_path
     
-    # Determine if we're in offline mode
-    is_offline = offline_mode if offline_mode is not None else settings.offline_mode
+    # Force offline mode since we want to use local models only
+    is_offline = True
+    logger.info(f"Using offline mode - will only use local files for {filename}")
     
-    # Try to download with local_files_only first to avoid API calls
+    # Try to find the file in the Hugging Face cache directory with local_files_only
     try:
         return hf_hub_download(
             repo_id=repo_id, 
@@ -67,12 +68,39 @@ def cached_hub_download(repo_id, filename, models_dir=None, offline_mode=None, *
             **kwargs
         )
     except (HfHubHTTPError, FileNotFoundError, ValueError) as e:
-        if is_offline:
-            logger.error(f"Failed to find {filename} locally and offline mode is enabled. Cannot download from Hugging Face.")
-            raise RuntimeError(f"File {filename} not found locally and offline mode is enabled. Ensure all required files are present in the models directory.")
-        logger.debug(f"File not found locally, will try to download: {e}")
+        logger.warning(f"Could not find {filename} in HF cache: {str(e)}")
+        # Instead of raising an error, continue with a fallback approach
     
-    # If local_files_only fails and we're not in offline mode, try to download from HF
+    # Provide more robust fallback paths for common files
+    if models_dir:
+        # Try some alternative locations
+        possible_paths = [
+            os.path.join(models_dir, filename),  # Direct path under models_dir
+            os.path.join(models_dir, os.path.basename(filename))  # Just the filename
+        ]
+        
+        # For voice files, try some common patterns
+        if 'voice' in filename or filename.endswith('.pt'):
+            voice_name = os.path.basename(filename).replace('.pt', '')
+            possible_paths.extend([
+                os.path.join(models_dir, 'voices', f"{voice_name}.pt"),
+                os.path.join(models_dir, 'voices', voice_name, 'model.pt')
+            ])
+        
+        # Check each possible location
+        for path in possible_paths:
+            if os.path.exists(path):
+                logger.info(f"Found file at alternative location: {path}")
+                return path
+    
+    # We're in offline mode and couldn't find the file
+    logger.error(f"Could not find {filename} in any local directory.")
+    logger.error(f"Please ensure the file is placed in the correct directory.")
+    raise RuntimeError(f"File {filename} not found locally. Make sure all required models are present.")
+    
+    # The following code will never be executed due to offline mode
+    # But we'll keep it as a commented reference for future changes
+    """
     try:
         logger.info(f"Downloading {filename} from Hugging Face ({repo_id})")
         return hf_hub_download(repo_id=repo_id, filename=filename, **kwargs)
@@ -80,3 +108,4 @@ def cached_hub_download(repo_id, filename, models_dir=None, offline_mode=None, *
         if e.response.status_code == 429:
             logger.error(f"Rate limit hit (429). Consider enabling offline mode and ensuring all models are downloaded beforehand.")
         raise
+    """

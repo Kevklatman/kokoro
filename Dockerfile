@@ -51,8 +51,8 @@ RUN echo '#!/bin/bash' > /app/start.sh \
     && echo '  echo "OFFLINE MODE ENABLED: Will only use local models"' >> /app/start.sh \
     && echo 'fi' >> /app/start.sh \
     && echo '' >> /app/start.sh \
-    && echo '# Start the server' >> /app/start.sh \
-    && echo 'cd /app && exec gunicorn entry.main:app --bind ${HOST}:${PORT} --workers 1 --timeout 0 "$@"' >> /app/start.sh \
+    && echo '# Start the server with proper ASGI worker' >> /app/start.sh \
+    && echo 'cd /app && exec gunicorn entry.main:app --bind ${HOST}:${PORT} --workers 1 --worker-class uvicorn.workers.UvicornWorker --timeout 0 "$@"' >> /app/start.sh \
     && chmod +x /app/start.sh
 
 # First, copy the entire project to handle model files

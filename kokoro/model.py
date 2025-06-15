@@ -2,13 +2,21 @@ from .istftnet import Decoder
 from .modules import CustomAlbert, ProsodyPredictor, TextEncoder
 from .cpu_optimizations import optimize_for_cpu
 from dataclasses import dataclass
-from .model_utils import cached_hub_download
 from loguru import logger
 from transformers import AlbertConfig
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Union, Tuple, Any
 import json
 import torch
 import os
+
+# Import from centralized model_loader module
+from kokoro.model_loader import (
+    load_model_safely, 
+    cached_hub_download, 
+    set_offline_mode, 
+    get_offline_mode,
+    SafeModelLoader
+)
 
 class KModel(torch.nn.Module):
     '''
@@ -83,45 +91,30 @@ class KModel(torch.nn.Module):
         )
         # Handle model loading
         if not model:
-            # Check if model exists locally first
-            if models_dir and repo_id in KModel.MODEL_NAMES:
-                model_name = KModel.MODEL_NAMES[repo_id]
-                local_model = os.path.join(models_dir, model_name)
-                if os.path.exists(local_model):
-                    logger.info(f"Using local model file: {local_model}")
-                    model = local_model
-                else:
-                    # If not found locally, try with the repo folder structure
-                    repo_name = repo_id.split("/")[-1]
-                    local_model_in_repo = os.path.join(models_dir, repo_name, model_name)
-                    if os.path.exists(local_model_in_repo):
-                        logger.info(f"Using local model file in repo folder: {local_model_in_repo}")
-                        model = local_model_in_repo
-                    else:
-                        # If still not found locally, download from HF
-                        logger.info(f"Model not found locally, downloading from {repo_id}")
-                        model = cached_hub_download(repo_id=repo_id, filename=KModel.MODEL_NAMES[repo_id], models_dir=models_dir)
-            else:
-                # No models_dir provided or no known model name, download from HF
-                model = cached_hub_download(repo_id=repo_id, filename=KModel.MODEL_NAMES[repo_id], models_dir=models_dir)
-        
-        # Multi-stage loading approach to handle different PyTorch versions and formats
-        model_data = None
-        for attempt, config in enumerate([
-            {"map_location": 'cpu', "weights_only": True},  # Safest option first
-            {"map_location": 'cpu', "weights_only": False},  # Less safe but needed for some models
-            {"map_location": 'cpu'}  # Basic compatibility mode
-        ]):
+            # Check if model exists locally or download it using our centralized function
             try:
-                logger.info(f"Model loading attempt {attempt+1} with config: {config}")
-                model_data = torch.load(model, **config)
-                logger.info(f"Successfully loaded model with config: {config}")
-                break
+                model_name = KModel.MODEL_NAMES.get(repo_id, 'model.pt')
+                model = cached_hub_download(
+                    repo_id=repo_id,
+                    filename=model_name,
+                    models_dir=models_dir,
+                    force_download=False
+                )
+                logger.info(f"Successfully located/downloaded model: {model}")
             except Exception as e:
-                logger.warning(f"Failed to load model (attempt {attempt+1}): {str(e)}")
-                if attempt == 2:  # Last attempt failed
-                    logger.error("All loading attempts failed for model")
-                    raise
+                logger.error(f"Failed to locate/download model: {str(e)}")
+                raise
+        
+        # Load the model with our safe loading function that handles version compatibility
+        try:
+            # Use SafeModelLoader context manager to temporarily use our safe loader
+            with SafeModelLoader():
+                logger.info(f"Loading model from {model} with safe loading mechanisms")
+                model_data = torch.load(model, map_location='cpu')
+                logger.info("Successfully loaded model")
+        except Exception as e:
+            logger.error(f"Failed to load model with safe loader: {str(e)}")
+            raise
             
         for key, state_dict in model_data.items():
             assert hasattr(self, key), key

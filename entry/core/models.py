@@ -4,10 +4,8 @@ TTS model management and initialization
 import os
 import sys
 import torch
-import io
-import pickle
 import traceback
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Set
 from loguru import logger
 
 from huggingface_hub import login
@@ -59,38 +57,7 @@ VOICE_PRESETS = {
 
 
 
-# Define a custom unpickler to ignore the problematic 'v' key
-class IgnoreKeyUnpickler(pickle.Unpickler):
-    """Custom unpickler that ignores 'v' key errors and other legacy serialization issues.
-    
-    This handles legacy PyTorch serialization issues between versions.
-    """
-    def __init__(self, file_obj):
-        super().__init__(file_obj)
-        self.key_errors = 0
-        self.ignored_errors = []
-    
-    def find_class(self, module, name):
-        # Handle class lookup for legacy serialized models
-        try:
-            return super().find_class(module, name)
-        except (ImportError, AttributeError) as e:
-            error_msg = f"Ignored error during unpickling - module: {module}, name: {name}, error: {e}"
-            logger.warning(error_msg)
-            self.ignored_errors.append(error_msg)
-            # Return a placeholder for missing classes
-            return lambda *args, **kwargs: None
-    
-    def persistent_load(self, pid):
-        # Handle legacy storage references
-        try:
-            if isinstance(pid, tuple) and pid[0] == 'storage':
-                return pid
-            logger.debug(f"Persistent load called with: {type(pid)} {str(pid)[:100]}")
-            return pid
-        except Exception as e:
-            logger.warning(f"Handled error in persistent_load: {e}")
-            return None
+# IgnoreKeyUnpickler moved to centralized kokoro.model_loader module
             
 def initialize_models(force_online=False):
     """Initialize TTS models and pipelines using the centralized model loading functionality"""
@@ -205,48 +172,39 @@ def initialize_models(force_online=False):
             voice_path = os.path.join(voice_dir, voice_file)
             logger.info(f"Loading voice from: {voice_path}")
             
-            # Voice loading with safe loader
+            # Voice loading with centralized safe loader
             try:
-                # Override the pipeline's load_voice method
-                original_load_voice = pipelines[voice[0]].load_voice
-                
-                # Create a safer version of load_voice
-                def safe_load_voice(voice_name, *args, **kwargs):
+                # Use SafeModelLoader context manager for voice loading
+                with SafeModelLoader():
                     try:
-                        # First try the original method
-                        return original_load_voice(voice_name, *args, **kwargs)
-                    except Exception as e:
-                        if "invalid load key, 'v'" in str(e):
-                            # If we get the invalid key error, use our safe loader directly
-                            logger.info(f"Using safe loader for voice: {voice_name}")
+                        # Try standard pipeline loading first
+                        logger.info(f"Loading voice using pipeline: {voice}")
+                        pipelines[voice[0]].load_voice(voice)
+                        available_voices.add(voice)
+                        logger.info(f"Successfully loaded voice: {voice}")
+                    except Exception as voice_error:
+                        logger.warning(f"Standard voice loading failed: {str(voice_error)}")
+                        logger.warning(f"Attempting direct loading for {voice} using centralized loader")
+                        
+                        # Use our centralized safe loader
+                        try:
+                            # Load voice model using centralized loader
+                            voice_model = torch.load(voice_path, map_location='cpu')
+                            
+                            # Manual registration
+                            pipelines[voice[0]].voices[voice] = voice_model
+                            available_voices.add(voice)
+                            logger.info(f"Successfully loaded voice with centralized loader: {voice}")
+                        except Exception as direct_error:
+                            # If that fails too, try the explicit load_model_safely function
+                            logger.warning(f"Direct loading failed: {str(direct_error)}")
+                            logger.warning(f"Final attempt with explicit load_model_safely for {voice}")
+                            
                             voice_model = load_model_safely(voice_path, map_location='cpu')
-                            pipelines[voice[0]].voices[voice_name] = voice_model
-                        else:
-                            raise
-                
-                # Replace the method temporarily
-                pipelines[voice[0]].load_voice = safe_load_voice
-                
-                try:
-                    # Call the patched method
-                    pipelines[voice[0]].load_voice(voice)
-                    available_voices.add(voice)
-                    logger.info(f"Successfully loaded voice: {voice}")
-                except Exception as voice_error:
-                    # Final attempt - direct loading
-                    logger.warning(f"Voice loading failed: {str(voice_error)}")
-                    logger.warning(f"Attempting direct loading for {voice}")
-                    
-                    # Use our safe loader directly
-                    voice_model = load_model_safely(voice_path, map_location='cpu')
-                    
-                    # Manual registration
-                    pipelines[voice[0]].voices[voice] = voice_model
-                    available_voices.add(voice)
-                    logger.info(f"Successfully loaded voice with direct loading: {voice}")
-                finally:
-                    # Restore the original method
-                    pipelines[voice[0]].load_voice = original_load_voice
+                            pipelines[voice[0]].voices[voice] = voice_model
+                            available_voices.add(voice)
+                            logger.info(f"Successfully loaded voice with fallback loader: {voice}")
+
             except Exception as e:
                 logger.error(f"All attempts to load voice {voice} failed: {str(e)}")
                 import traceback

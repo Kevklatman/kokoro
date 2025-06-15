@@ -30,13 +30,32 @@ jobs:
         run: |
           gcloud auth configure-docker ${{ env.AR_HOSTNAME }}
           
+      - name: Setup model files cache
+        id: cache-models
+        uses: actions/cache@v3
+        with:
+          path: ./models
+          key: ${{ runner.os }}-kokoro-models-${{ hashFiles('**/requirements.txt') }}
+      
+      - name: Download models if not cached
+        if: steps.cache-models.outputs.cache-hit != 'true'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          mkdir -p ./models/Kokoro-82M
+          pip install huggingface_hub
+          python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='hexgrad/Kokoro-82M', filename='config.json', token='$HF_TOKEN', local_dir='./models/Kokoro-82M'); hf_hub_download(repo_id='hexgrad/Kokoro-82M', filename='kokoro-v1_0.pth', token='$HF_TOKEN', local_dir='./models/Kokoro-82M')"
+      
       - name: Build and push Docker image
         run: |
+          echo "Building with models from cache"
+          ls -la ./models/Kokoro-82M
           docker build -t ${{ env.AR_HOSTNAME }}/${{ env.PROJECT_ID }}/${{ env.AR_REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }} .
           docker push ${{ env.AR_HOSTNAME }}/${{ env.PROJECT_ID }}/${{ env.AR_REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
           
       - name: Deploy to Cloud Run
         run: |
+          # Deploy with proper environment configuration for offline mode
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --image=${{ env.AR_HOSTNAME }}/${{ env.PROJECT_ID }}/${{ env.AR_REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
             --cpu=2 \
@@ -47,7 +66,7 @@ jobs:
             --port=8080 \
             --min-instances=0 \
             --max-instances=10 \
-            --set-env-vars=OFFLINE_MODE=true \
+            --set-env-vars=OFFLINE_MODE=true,PYTHONPATH=/app \
             --health-check-path=/health \
             --readiness-check-path=/ready \
             --region=${{ env.GCP_REGION }} \

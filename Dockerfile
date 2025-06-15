@@ -36,19 +36,25 @@ RUN mkdir -p ${STREAMS_DIR} \
 # Copy the model checker script
 COPY check_models.py /app/
 
-# Create a more robust startup script with proper path handling
+# Copy our test script
+COPY model_test.sh /app/model_test.sh
+RUN chmod +x /app/model_test.sh
+
+# Create a simpler startup script with proper path handling
 RUN echo '#!/bin/bash' > /app/start.sh \
-    && echo '# Set Python path properly' >> /app/start.sh \
     && echo 'export PYTHONPATH=/app:${PYTHONPATH}' >> /app/start.sh \
     && echo '' >> /app/start.sh \
     && echo 'echo "Checking model files..."' >> /app/start.sh \
     && echo 'cd /app && python /app/check_models.py' >> /app/start.sh \
     && echo '' >> /app/start.sh \
-    && echo '# Prepare for model loading' >> /app/start.sh \
-    && echo 'if [ "$OFFLINE_MODE" != "true" ]; then' >> /app/start.sh \
-    && echo '  echo "Online mode enabled, will download models if needed"' >> /app/start.sh \
-    && echo 'else' >> /app/start.sh \
+    && echo '# Test model loading' >> /app/start.sh \
+    && echo 'cd /app && bash /app/model_test.sh' >> /app/start.sh \
+    && echo '' >> /app/start.sh \
+    && echo '# OFFLINE_MODE handling' >> /app/start.sh \
+    && echo 'if [ "$OFFLINE_MODE" = "true" ]; then' >> /app/start.sh \
     && echo '  echo "OFFLINE MODE ENABLED: Will only use local models"' >> /app/start.sh \
+    && echo 'else' >> /app/start.sh \
+    && echo '  echo "Online mode enabled, will download models if needed"' >> /app/start.sh \
     && echo 'fi' >> /app/start.sh \
     && echo '' >> /app/start.sh \
     && echo '# Start the server with proper ASGI worker' >> /app/start.sh \

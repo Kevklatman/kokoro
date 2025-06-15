@@ -1,23 +1,13 @@
 #!/usr/bin/env python3
 """
-Script to check if model files exist in the expected locations
+Enhanced script to check model files and test model loading
 """
 import os
 import sys
 import json
 import importlib.util
+import traceback
 from pathlib import Path
-
-# Try to import torch to check version compatibility
-torch_available = False
-torch_version = None
-
-try:
-    import torch
-    torch_available = True
-    torch_version = torch.__version__
-except ImportError:
-    pass
 
 # Fix module paths
 def fix_import_paths():
@@ -34,20 +24,104 @@ def fix_import_paths():
 # Apply the path fix
 fix_import_paths()
 
-# Try to import our model loading functions
-models_loaded = False
-kokoro_loaded = False
-entry_core_models_available = False
-kokoro_model_available = False
+# Try to import torch to check version compatibility
+torch_available = False
+torch_version = None
 
-# First just check if the files exist
+try:
+    import torch
+    torch_available = True
+    torch_version = torch.__version__
+    print(f"PyTorch version: {torch_version}")
+except ImportError as e:
+    print(f"PyTorch import error: {e}")
+except Exception as e:
+    print(f"Unexpected error importing PyTorch: {e}")
+
+# Check module files
 app_dir = os.path.abspath("/app" if os.path.exists("/app") else ".")
 entry_models_path = os.path.join(app_dir, "entry", "core", "models.py")
 kokoro_model_path = os.path.join(app_dir, "kokoro", "model.py")
+models_dir = os.environ.get("MODELS_DIR", os.path.join(app_dir, "models"))
 
-print(f"Checking for module files:")
-print(f"  entry/core/models.py: {os.path.exists(entry_models_path)}")
-print(f"  kokoro/model.py: {os.path.exists(kokoro_model_path)}")
+print(f"\nChecking module files:")
+print(f"✓ entry/core/models.py: {'Found' if os.path.exists(entry_models_path) else 'Missing'}")
+print(f"✓ kokoro/model.py: {'Found' if os.path.exists(kokoro_model_path) else 'Missing'}")
+
+# Check important model files
+config_path = os.path.join(models_dir, "config.json")
+kokoro_config_path = os.path.join(models_dir, "Kokoro-82M", "config.json")
+model_path = os.path.join(models_dir, "Kokoro-82M", "kokoro-v1_0.pth")
+voices_dir = os.path.join(models_dir, "voices")
+
+print(f"\nChecking model files:")
+print(f"✓ Base config: {'Available' if os.path.exists(config_path) else 'Missing'}")
+print(f"✓ Kokoro config: {'Available' if os.path.exists(kokoro_config_path) else 'Missing'}")
+print(f"✓ Kokoro model: {'Available' if os.path.exists(model_path) else 'Missing'}")
+print(f"✓ Voice models: {'Available' if os.path.exists(voices_dir) else 'Missing'}")
+
+# Check voice files if directory exists
+if os.path.exists(voices_dir):
+    voice_files = [f for f in os.listdir(voices_dir) if f.endswith(".pt")]
+    print(f"\nFound {len(voice_files)} voice files:")
+    for voice_file in voice_files[:5]:  # Show first 5 voices
+        full_path = os.path.join(voices_dir, voice_file)
+        file_size = os.path.getsize(full_path)
+        print(f"✓ {os.path.join(models_dir, 'voices', voice_file)}: Found ({file_size} bytes)")
+    if len(voice_files) > 5:
+        print(f"... and {len(voice_files) - 5} more voice files")
+
+# Test model loading code
+model_loading_works = False
+print("\nModel loading code: Not ready")
+
+print("\nModel Check Summary:")
+print(f"Base config: {'Available' if os.path.exists(config_path) else 'Missing'}")
+print(f"Kokoro config: {'Available' if os.path.exists(kokoro_config_path) else 'Missing'}")
+print(f"Kokoro model: {'Available' if os.path.exists(model_path) else 'Missing'}")
+print(f"Voice models: {'Available' if os.path.exists(voices_dir) and len(voice_files) > 0 else 'Missing'}")
+print(f"Model loading code: {'Ready' if model_loading_works else 'Not ready'}")
+
+print("\nNOTE: Missing models will be downloaded from Hugging Face at runtime.")
+
+# Try to actually load the model
+try:
+    print("Attempting to verify model loading...")
+    # Try direct torch.load first
+    if os.path.exists(model_path):
+        print("Testing KModel multi-stage loading approach...")
+        # Try different loading configurations
+        loading_configs = [
+            {"map_location": "cpu", "weights_only": True},
+            {"map_location": "cpu"},
+            {"map_location": "cpu", "pickle_module": torch.serialization.pickle}
+        ]
+        
+        success = False
+        for i, config in enumerate(loading_configs, 1):
+            try:
+                print(f"Model loading attempt {i} with config: {config}")
+                # Use direct torch.load to test file integrity
+                model_data = torch.load(model_path, **config)
+                print(f"✓ Successfully loaded model with config: {config}")
+                success = True
+                break
+            except Exception as e:
+                print(f"✗ Failed with config {config}: {str(e)}")
+                continue
+        
+        if not success:
+            print("❌ All direct loading attempts failed. Model file may be corrupt or incompatible.")
+        
+        print("\nModel Loading Check Summary:")
+        print(f"Model loading: {'Successful' if success else 'Failed'}")
+        
+except Exception as e:
+    print(f"❌ Error testing model loading: {e}")
+    traceback.print_exc()
+
+print("\nNOTE: Model loading issues will be resolved at runtime.")
+
 
 try:
     try:

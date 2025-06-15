@@ -36,16 +36,23 @@ RUN mkdir -p ${STREAMS_DIR} \
 # Copy the model checker script
 COPY check_models.py /app/
 
-# Create a startup script for model checking and server startup
+# Create a more robust startup script with proper path handling
 RUN echo '#!/bin/bash' > /app/start.sh \
-    && echo 'echo "Checking model files..."' >> /app/start.sh \
-    && echo 'python /app/check_models.py' >> /app/start.sh \
+    && echo '# Set Python path properly' >> /app/start.sh \
+    && echo 'export PYTHONPATH=/app:${PYTHONPATH}' >> /app/start.sh \
     && echo '' >> /app/start.sh \
+    && echo 'echo "Checking model files..."' >> /app/start.sh \
+    && echo 'cd /app && python /app/check_models.py' >> /app/start.sh \
+    && echo '' >> /app/start.sh \
+    && echo '# Prepare for model loading' >> /app/start.sh \
     && echo 'if [ "$OFFLINE_MODE" != "true" ]; then' >> /app/start.sh \
     && echo '  echo "Online mode enabled, will download models if needed"' >> /app/start.sh \
+    && echo 'else' >> /app/start.sh \
+    && echo '  echo "OFFLINE MODE ENABLED: Will only use local models"' >> /app/start.sh \
     && echo 'fi' >> /app/start.sh \
     && echo '' >> /app/start.sh \
-    && echo 'exec gunicorn entry.main:app --bind ${HOST}:${PORT} --workers 1 --timeout 0 "$@"' >> /app/start.sh \
+    && echo '# Start the server' >> /app/start.sh \
+    && echo 'cd /app && exec gunicorn entry.main:app --bind ${HOST}:${PORT} --workers 1 --timeout 0 "$@"' >> /app/start.sh \
     && chmod +x /app/start.sh
 
 # First, copy the entire project to handle model files

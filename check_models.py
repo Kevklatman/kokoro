@@ -19,29 +19,87 @@ try:
 except ImportError:
     pass
 
+# Fix module paths
+def fix_import_paths():
+    """Add necessary paths to sys.path to ensure modules can be imported"""
+    app_dir = os.path.abspath("/app" if os.path.exists("/app") else ".")
+    
+    # Add potential module paths
+    potential_paths = [app_dir, os.path.dirname(app_dir)]
+    for path in potential_paths:
+        if path not in sys.path:
+            sys.path.insert(0, path)
+            print(f"Added {path} to sys.path")
+
+# Apply the path fix
+fix_import_paths()
+
 # Try to import our model loading functions
 models_loaded = False
 kokoro_loaded = False
 entry_core_models_available = False
 kokoro_model_available = False
 
+# First just check if the files exist
+app_dir = os.path.abspath("/app" if os.path.exists("/app") else ".")
+entry_models_path = os.path.join(app_dir, "entry", "core", "models.py")
+kokoro_model_path = os.path.join(app_dir, "kokoro", "model.py")
+
+print(f"Checking for module files:")
+print(f"  entry/core/models.py: {os.path.exists(entry_models_path)}")
+print(f"  kokoro/model.py: {os.path.exists(kokoro_model_path)}")
+
 try:
-    spec = importlib.util.find_spec('entry.core.models')
-    entry_core_models_available = spec is not None
-    
-    spec = importlib.util.find_spec('kokoro.model')
-    kokoro_model_available = spec is not None
-    
-    if entry_core_models_available and kokoro_model_available:
+    try:
+        # Try direct imports first
         import entry.core.models
+        entry_core_models_available = True
+    except ImportError as e:
+        print(f"Direct import failed: {e}")
+        
+        # Try manual import
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("entry.core.models", entry_models_path)
+            if spec:
+                entry_core_models = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(entry_core_models)
+                sys.modules["entry.core.models"] = entry_core_models
+                entry_core_models_available = True
+                print("Manually imported entry.core.models")
+        except Exception as e:
+            print(f"Manual import failed: {e}")
+    
+    try:
+        # Try direct import for kokoro model
         from kokoro.model import KModel
+        kokoro_model_available = True
+    except ImportError as e:
+        print(f"Direct Kokoro import failed: {e}")
+        
+        # Try manual import
+        try:
+            spec = importlib.util.spec_from_file_location("kokoro.model", kokoro_model_path)
+            if spec:
+                kokoro_model = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(kokoro_model)
+                sys.modules["kokoro.model"] = kokoro_model
+                kokoro_model_available = True
+                print("Manually imported kokoro.model")
+        except Exception as e:
+            print(f"Manual Kokoro import failed: {e}")
+    
+    # Check if both modules are available
+    if entry_core_models_available and kokoro_model_available:
         models_loaded = True
         try:
-            # Check if we can initialize a minimal model just to test loading
-            from entry.core.models import init_model
-            kokoro_loaded = True
+            # Check if we can access the model initialization function
+            if hasattr(sys.modules.get("entry.core.models", None), "safe_load_model"):
+                kokoro_loaded = True
+            else:
+                print("safe_load_model not found in entry.core.models")
         except Exception as e:
-            print(f"Could not import init_model: {e}")
+            print(f"Could not check for safe_load_model: {e}")
             kokoro_loaded = False
 except Exception as e:
     print(f"Could not import model modules: {e}")

@@ -6,6 +6,9 @@ from huggingface_hub import hf_hub_download
 from huggingface_hub.utils import HfHubHTTPError
 from loguru import logger
 
+# Global variable to temporarily override offline mode
+_override_offline_mode = None
+
 # Try to get settings, but don't fail if not available
 try:
     from entry.config import get_settings
@@ -15,6 +18,19 @@ except (ImportError, AttributeError):
     class DummySettings:
         offline_mode = False
     settings = DummySettings()
+
+
+def _set_offline_mode(value):
+    """
+    Temporarily override the global offline mode setting.
+    This is used to force online mode when needed.
+    
+    Args:
+        value (bool): True for offline mode, False for online mode
+    """
+    global _override_offline_mode
+    _override_offline_mode = value
+    logger.info(f"Setting offline mode override to: {value}")
 
 def cached_hub_download(repo_id, filename, models_dir=None, offline_mode=None, **kwargs):
     """
@@ -55,9 +71,15 @@ def cached_hub_download(repo_id, filename, models_dir=None, offline_mode=None, *
                 logger.info(f"Using cached voice file: {voice_path}")
                 return voice_path
     
-    # Force offline mode since we want to use local models only
-    is_offline = True
-    logger.info(f"Using offline mode - will only use local files for {filename}")
+    # Check if offline mode is explicitly set
+    is_offline = settings.offline_mode if offline_mode is None else offline_mode
+    if _override_offline_mode is not None:
+        is_offline = _override_offline_mode
+        
+    if is_offline:
+        logger.info(f"Using offline mode - will only use local files for {filename}")
+    else:
+        logger.info(f"Using online mode - will download {filename} if not found locally")
     
     # Try to find the file in the Hugging Face cache directory with local_files_only
     try:
@@ -93,14 +115,13 @@ def cached_hub_download(repo_id, filename, models_dir=None, offline_mode=None, *
                 logger.info(f"Found file at alternative location: {path}")
                 return path
     
-    # We're in offline mode and couldn't find the file
-    logger.error(f"Could not find {filename} in any local directory.")
-    logger.error(f"Please ensure the file is placed in the correct directory.")
-    raise RuntimeError(f"File {filename} not found locally. Make sure all required models are present.")
+    # If we're in offline mode, we can't download the file
+    if is_offline:
+        logger.error(f"Could not find {filename} in any local directory.")
+        logger.error(f"Please ensure the file is placed in the correct directory.")
+        raise RuntimeError(f"File {filename} not found locally. Make sure all required models are present.")
     
-    # The following code will never be executed due to offline mode
-    # But we'll keep it as a commented reference for future changes
-    """
+    # If we're in online mode, try to download the file
     try:
         logger.info(f"Downloading {filename} from Hugging Face ({repo_id})")
         return hf_hub_download(repo_id=repo_id, filename=filename, **kwargs)
@@ -108,4 +129,3 @@ def cached_hub_download(repo_id, filename, models_dir=None, offline_mode=None, *
         if e.response.status_code == 429:
             logger.error(f"Rate limit hit (429). Consider enabling offline mode and ensuring all models are downloaded beforehand.")
         raise
-    """

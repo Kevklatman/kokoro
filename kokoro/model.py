@@ -8,6 +8,7 @@ from transformers import AlbertConfig
 from typing import Dict, Optional, Union
 import json
 import torch
+import os
 
 class KModel(torch.nn.Module):
     '''
@@ -42,10 +43,25 @@ class KModel(torch.nn.Module):
             repo_id = 'hexgrad/Kokoro-82M'
             print(f"WARNING: Defaulting repo_id to {repo_id}. Pass repo_id='{repo_id}' to suppress this warning.")
         self.repo_id = repo_id
+        
+        # Handle config loading
         if not isinstance(config, dict):
             if not config:
-                logger.debug("No config provided, downloading from HF")
-                config = cached_hub_download(repo_id=repo_id, filename='config.json', models_dir=models_dir)
+                logger.debug("No config provided, checking local path first then downloading from HF")
+                # Check if config exists locally first
+                if models_dir:
+                    local_config = os.path.join(models_dir, 'config.json')
+                    if os.path.exists(local_config):
+                        logger.info(f"Using local config file: {local_config}")
+                        config = local_config
+                    else:
+                        # If not found locally, download it
+                        logger.info(f"Config not found locally, downloading from {repo_id}")
+                        config = cached_hub_download(repo_id=repo_id, filename='config.json', models_dir=models_dir)
+                else:
+                    # No models_dir provided, download from HF
+                    config = cached_hub_download(repo_id=repo_id, filename='config.json')
+                    
             with open(config, 'r', encoding='utf-8') as r:
                 config = json.load(r)
                 logger.debug(f"Loaded config: {config}")
@@ -65,8 +81,29 @@ class KModel(torch.nn.Module):
             dim_in=config['hidden_dim'], style_dim=config['style_dim'],
             dim_out=config['n_mels'], disable_complex=disable_complex, **config['istftnet']
         )
+        # Handle model loading
         if not model:
-            model = cached_hub_download(repo_id=repo_id, filename=KModel.MODEL_NAMES[repo_id], models_dir=models_dir)
+            # Check if model exists locally first
+            if models_dir and repo_id in KModel.MODEL_NAMES:
+                model_name = KModel.MODEL_NAMES[repo_id]
+                local_model = os.path.join(models_dir, model_name)
+                if os.path.exists(local_model):
+                    logger.info(f"Using local model file: {local_model}")
+                    model = local_model
+                else:
+                    # If not found locally, try with the repo folder structure
+                    repo_name = repo_id.split("/")[-1]
+                    local_model_in_repo = os.path.join(models_dir, repo_name, model_name)
+                    if os.path.exists(local_model_in_repo):
+                        logger.info(f"Using local model file in repo folder: {local_model_in_repo}")
+                        model = local_model_in_repo
+                    else:
+                        # If still not found locally, download from HF
+                        logger.info(f"Model not found locally, downloading from {repo_id}")
+                        model = cached_hub_download(repo_id=repo_id, filename=KModel.MODEL_NAMES[repo_id], models_dir=models_dir)
+            else:
+                # No models_dir provided or no known model name, download from HF
+                model = cached_hub_download(repo_id=repo_id, filename=KModel.MODEL_NAMES[repo_id], models_dir=models_dir)
         
         # Multi-stage loading approach to handle different PyTorch versions and formats
         model_data = None

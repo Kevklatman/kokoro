@@ -42,9 +42,51 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
+          # Create directories
+          mkdir -p ./models
+          mkdir -p ./models/voices
           mkdir -p ./models/Kokoro-82M
+          
+          # Install dependencies
           pip install huggingface_hub
-          python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='hexgrad/Kokoro-82M', filename='config.json', token='$HF_TOKEN', local_dir='./models/Kokoro-82M'); hf_hub_download(repo_id='hexgrad/Kokoro-82M', filename='kokoro-v1_0.pth', token='$HF_TOKEN', local_dir='./models/Kokoro-82M')"
+          
+          # Download config and model files
+          echo "Downloading main model files..."
+          python -c "import os, sys, shutil; from huggingface_hub import hf_hub_download; \
+            token = os.environ.get('HF_TOKEN', ''); \
+            print('Using token:', '*' * len(token) if token else 'None'); \
+            \
+            # Download config to both locations for compatibility \
+            config_file = hf_hub_download(repo_id='hexgrad/Kokoro-82M', filename='config.json', token=token, local_dir='./models/Kokoro-82M'); \
+            print('Downloaded config to:', config_file); \
+            shutil.copy(config_file, './models/config.json'); \
+            print('Copied to root models dir'); \
+            \
+            # Download model file \
+            print('Downloading model file...'); \
+            model_file = hf_hub_download(repo_id='hexgrad/Kokoro-82M', filename='kokoro-v1_0.pth', token=token, local_dir='./models/Kokoro-82M'); \
+            print('Downloaded model to:', model_file); \
+            \
+            # Create directories for voice files \
+            voices_dir = './models/voices'; \
+            os.makedirs(voices_dir, exist_ok=True); \
+            \
+            # Download voice files \
+            for voice_file in ['lisa.pt', 'michael.pt', 'random.pt']: \
+                print(f'Downloading voice file {voice_file}'); \
+                voice_path = hf_hub_download(repo_id='hexgrad/Kokoro-82M', filename=f'voices/{voice_file}', token=token, local_dir='./models'); \
+                print(f'Downloaded {voice_file} to {voice_path}'); \
+            \
+            # Ensure files are in correct structure \
+            print('Setting up final directory structure'); \
+            print('Done preparing model files'); \
+            sys.exit(0)"
+          
+          # Check if files were downloaded correctly
+          echo "Verifying model files..."
+          ls -la ./models
+          ls -la ./models/Kokoro-82M
+          ls -la ./models/voices
       
       - name: Build and push Docker image
         run: |

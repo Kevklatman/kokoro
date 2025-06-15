@@ -68,15 +68,28 @@ class IgnoreKeyUnpickler(pickle.Unpickler):
         # Handle persistent_load as in torch's default unpickler
         try:
             return super().persistent_load(pid)
-        except:
+        except Exception as e:
+            logger.warning(f"Ignoring persistent_load error: {type(e).__name__}")
             return None
     
     def find_class(self, module, name):
         # Handle class loading safely
         try:
             return super().find_class(module, name)
-        except:
+        except Exception as e:
+            logger.warning(f"Ignoring find_class error for {module}.{name}: {type(e).__name__}")
             return None
+            
+    # Override load_build to handle 'v' key errors in OrderedDict and other objects
+    def load_build(self):
+        try:
+            return super().load_build()
+        except KeyError as e:
+            if str(e) == "'v'" or 'v' in str(e):
+                logger.warning("Ignoring 'v' key error in load_build")
+                # Return an empty object of the appropriate type
+                return {}
+            raise
 
 # Store the original torch.load function to prevent recursion
 _original_torch_load = torch.load

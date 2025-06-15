@@ -78,21 +78,35 @@ class IgnoreKeyUnpickler(pickle.Unpickler):
         except:
             return None
 
+# Store the original torch.load function to prevent recursion
+_original_torch_load = torch.load
+
 # Direct function to load models safely - completely independent of the normal torch.load
-def load_model_safely(file_path, map_location='cpu'):
+def load_model_safely(file_path, map_location='cpu', **kwargs):
     """Load a PyTorch model safely while handling 'v' key errors"""
     try:
-        # First attempt with normal torch.load
-        return torch.load(file_path, map_location=map_location)
+        # First attempt with normal torch.load, using the original function
+        return _original_torch_load(file_path, map_location=map_location, **kwargs)
     except RuntimeError as e:
-        error_str = str(e)
+        # Store error as a simple string to avoid recursion errors with complex exceptions
+        try:
+            error_str = str(e)
+        except RecursionError:
+            error_str = "Recursion error while accessing exception details"
+        
         if "invalid load key, 'v'" in error_str:
             logger.info(f"Using custom unpickler for {file_path} due to 'v' key error")
             try:
                 # Try with weights_only=True
-                return torch.load(file_path, map_location=map_location, weights_only=True)
+                return _original_torch_load(file_path, map_location=map_location, weights_only=True)
             except Exception as weights_only_error:
-                logger.warning(f"weights_only approach failed: {str(weights_only_error)}")
+                # Again, handle errors carefully to avoid recursion
+                try:
+                    weights_only_error_str = str(weights_only_error)
+                except:
+                    weights_only_error_str = "Error accessing exception details"
+                    
+                logger.warning(f"weights_only approach failed: {weights_only_error_str}")
                 # Direct unpickling as last resort
                 with open(file_path, 'rb') as f:
                     try:
@@ -158,7 +172,7 @@ def initialize_models(force_online=False):
             original_init = KModel.__init__
             
             # Define a new initialization method
-            def safe_init(self, models_dir=None):
+            def safe_init(self, repo_id=None, config=None, model=None, disable_complex=False, models_dir=None):
                 # Save the original torch.load
                 original_torch_load = torch.load
                 
@@ -166,8 +180,9 @@ def initialize_models(force_online=False):
                 torch.load = load_model_safely
                 
                 try:
-                    # Call the original init
-                    original_init(self, models_dir)
+                    # Call the original init with all parameters
+                    original_init(self, repo_id=repo_id, config=config, model=model, 
+                                  disable_complex=disable_complex, models_dir=models_dir)
                 finally:
                     # Restore torch.load
                     torch.load = original_torch_load
@@ -178,7 +193,8 @@ def initialize_models(force_online=False):
             # Initialize models with fallback to online mode
             logger.info("Creating CPU model with safe loader")
             try:
-                models[False] = KModel(models_dir=settings.models_dir).to('cpu').eval()
+                # Pass repo_id and models_dir separately
+                models[False] = KModel(repo_id='hexgrad/Kokoro-82M', models_dir=settings.models_dir).to('cpu').eval()
             except RuntimeError as e:
                 if "not found locally" in str(e) and not settings.offline_mode:
                     logger.warning(f"Model not found locally: {str(e)}")
@@ -186,7 +202,8 @@ def initialize_models(force_online=False):
                     # Force online download
                     from kokoro.model_utils import _set_offline_mode
                     _set_offline_mode(False)
-                    models[False] = KModel(models_dir=settings.models_dir).to('cpu').eval()
+                    # Pass repo_id and models_dir separately on retry
+                    models[False] = KModel(repo_id='hexgrad/Kokoro-82M', models_dir=settings.models_dir).to('cpu').eval()
                 else:
                     raise
                     

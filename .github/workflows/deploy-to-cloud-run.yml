@@ -50,40 +50,96 @@ jobs:
           # Install dependencies
           pip install huggingface_hub
           
-          # Download config and model files
-          echo "Downloading main model files..."
-          python -c "import os, sys, shutil; from huggingface_hub import hf_hub_download; \
-            token = os.environ.get('HF_TOKEN', ''); \
-            print('Using token:', '*' * len(token) if token else 'None'); \
-            \
-            # Download config to both locations for compatibility \
-            config_file = hf_hub_download(repo_id='hexgrad/Kokoro-82M', filename='config.json', token=token, local_dir='./models/Kokoro-82M'); \
-            print('Downloaded config to:', config_file); \
-            shutil.copy(config_file, './models/config.json'); \
-            print('Copied to root models dir'); \
-            \
-            # Download model file \
-            print('Downloading model file...'); \
-            model_file = hf_hub_download(repo_id='hexgrad/Kokoro-82M', filename='kokoro-v1_0.pth', token=token, local_dir='./models/Kokoro-82M'); \
-            print('Downloaded model to:', model_file); \
-            \
-            # Create directories for voice files \
-            voices_dir = './models/voices'; \
-            os.makedirs(voices_dir, exist_ok=True); \
-            \
-            # Download voice files \
-            for voice_file in ['lisa.pt', 'michael.pt', 'random.pt']: \
-                print(f'Downloading voice file {voice_file}'); \
-                voice_path = hf_hub_download(repo_id='hexgrad/Kokoro-82M', filename=f'voices/{voice_file}', token=token, local_dir='./models'); \
-                print(f'Downloaded {voice_file} to {voice_path}'); \
-            \
-            # Ensure files are in correct structure \
-            print('Setting up final directory structure'); \
-            print('Done preparing model files'); \
-            sys.exit(0)"
+          # Download model files from Hugging Face
+          python -c "
+          import os
+          import sys
+          import shutil
+          from huggingface_hub import hf_hub_download
+          
+          # Get token from environment - proper way to access env vars in Python
+          token = os.environ.get('HF_TOKEN')
+          if not token:
+              print('WARNING: HF_TOKEN environment variable not set')
+          else:
+              print(f'Using token: {\'*\' * 8}')
+          
+          # Ensure directories exist
+          models_dir = os.path.join(os.getcwd(), 'models')
+          kokoro_dir = os.path.join(models_dir, 'Kokoro-82M')
+          voices_dir = os.path.join(models_dir, 'voices')
+          os.makedirs(models_dir, exist_ok=True)
+          os.makedirs(kokoro_dir, exist_ok=True)
+          os.makedirs(voices_dir, exist_ok=True)
+          
+          # Download model file
+          try:
+              print('\nDownloading main model file...')
+              model_file = hf_hub_download(
+                  repo_id='hexgrad/Kokoro-82M',
+                  filename='model.pt',
+                  local_dir=models_dir,
+                  token=token
+              )
+              print(f'Successfully downloaded model to: {model_file}')
+              print(f'File size: {os.path.getsize(model_file)} bytes')
+          except Exception as e:
+              print(f'Error downloading model file: {e}')
+              sys.exit(1)
+          
+          # Download config file
+          try:
+              print('\nDownloading config file...')
+              config_file = hf_hub_download(
+                  repo_id='hexgrad/Kokoro-82M',
+                  filename='config.json',
+                  local_dir=kokoro_dir,
+                  token=token
+              )
+              print(f'Downloaded config to: {config_file}')
+              shutil.copy(config_file, os.path.join(models_dir, 'config.json'))
+              print(f'Copied config to root models dir: {os.path.join(models_dir, "config.json")}')
+          except Exception as e:
+              print(f'Error downloading config file: {e}')
+          
+          # Download voice files
+          try:
+              print('\nDownloading voice files...')
+              voices = [
+                  'default.npz',
+                  'alta.npz',
+                  'athena.npz', 
+                  'ceres.npz',
+                  'luna.npz'
+              ]
+              
+              for voice in voices:
+                  voice_file = hf_hub_download(
+                      repo_id='hexgrad/Kokoro-82M-voices',
+                      filename=voice,
+                      local_dir=voices_dir,
+                      token=token
+                  )
+                  print(f'Downloaded {voice}')
+              
+              print('All voices downloaded successfully')
+          except Exception as e:
+              print(f'Error downloading voices: {e}')
+          
+          # Verify downloaded files
+          print('\nVerifying downloaded files:')
+          file_count = 0
+          for root, dirs, files in os.walk(models_dir):
+              for file in files:
+                  filepath = os.path.join(root, file)
+                  print(f'- {filepath} ({os.path.getsize(filepath)} bytes)')
+                  file_count += 1
+          
+          print(f'\nTotal files downloaded: {file_count}')
+          "
           
           # Check if files were downloaded correctly
-          echo "Verifying model files..."
+          echo "\nVerifying model files in filesystem..."
           ls -la ./models
           ls -la ./models/Kokoro-82M
           ls -la ./models/voices

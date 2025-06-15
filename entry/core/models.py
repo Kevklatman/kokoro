@@ -60,34 +60,62 @@ VOICE_PRESETS = {
 
 # Define a custom unpickler to ignore the problematic 'v' key
 class IgnoreKeyUnpickler(pickle.Unpickler):
+    """Custom unpickler that ignores 'v' key errors and other legacy serialization issues.
+    
+    This handles legacy PyTorch serialization issues between versions.
+    """
     def __init__(self, file_obj):
         super().__init__(file_obj)
-        self.ignore_keys = ['v']
-    
-    def persistent_load(self, pid):
-        # Handle persistent_load as in torch's default unpickler
-        try:
-            return super().persistent_load(pid)
-        except Exception as e:
-            logger.warning(f"Ignoring persistent_load error: {type(e).__name__}")
-            return None
+        self.key_errors = 0
+        self.ignored_errors = []
     
     def find_class(self, module, name):
-        # Handle class loading safely
+        # Handle class lookup for legacy serialized models
         try:
             return super().find_class(module, name)
+        except (ImportError, AttributeError) as e:
+            error_msg = f"Ignored error during unpickling - module: {module}, name: {name}, error: {e}"
+            logger.warning(error_msg)
+            self.ignored_errors.append(error_msg)
+            # Return a placeholder for missing classes
+            return lambda *args, **kwargs: None
+    
+    def persistent_load(self, pid):
+        # Handle legacy storage references
+        try:
+            if isinstance(pid, tuple) and pid[0] == 'storage':
+                return pid
+            logger.debug(f"Persistent load called with: {type(pid)} {str(pid)[:100]}")
+            return pid
         except Exception as e:
-            logger.warning(f"Ignoring find_class error for {module}.{name}: {type(e).__name__}")
+            logger.warning(f"Handled error in persistent_load: {e}")
             return None
             
-    # Override load_build to handle 'v' key errors in OrderedDict and other objects
-    def load_build(self):
+    def load_build(self, *args, **kwargs):
         try:
-            return super().load_build()
+            return super().load_build(*args, **kwargs)
         except KeyError as e:
-            if str(e) == "'v'" or 'v' in str(e):
-                logger.warning("Ignoring 'v' key error in load_build")
-                # Return an empty object of the appropriate type
+            if "'v'" in str(e):
+                self.key_errors += 1
+                logger.info(f"Ignoring 'v' key error in unpickle load_build (occurrence {self.key_errors})")
+                # Return None for this particular failed build
+                return None
+            # For other key errors, log but still raise
+            logger.error(f"Unhandled key error in unpickler: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in load_build: {e}")
+            raise
+            
+    def load(self):
+        try:
+            return super().load()
+        except Exception as e:
+            # Last resort error handling
+            logger.error(f"Error in main unpickler load: {e}")
+            if self.key_errors > 0:
+                logger.warning(f"Model load partially succeeded with {self.key_errors} ignored 'v' key errors")
+                # Try to return a partial result if we've been handling 'v' keys
                 return {}
             raise
 
@@ -95,44 +123,76 @@ class IgnoreKeyUnpickler(pickle.Unpickler):
 _original_torch_load = torch.load
 
 # Direct function to load models safely - completely independent of the normal torch.load
-def load_model_safely(file_path, map_location='cpu', **kwargs):
-    """Load a PyTorch model safely while handling 'v' key errors"""
-    try:
-        # First attempt with normal torch.load, using the original function
-        return _original_torch_load(file_path, map_location=map_location, **kwargs)
-    except RuntimeError as e:
-        # Store error as a simple string to avoid recursion errors with complex exceptions
-        try:
-            error_str = str(e)
-        except RecursionError:
-            error_str = "Recursion error while accessing exception details"
+def load_model_safely(file_path, map_location=None, **kwargs):
+    """Safely load a PyTorch model with fallback methods to handle corrupted files
+    
+    Args:
+        file_path: Path to the model file
+        map_location: Device to load model to (cpu, cuda)
+        **kwargs: Additional arguments to pass to torch.load
         
-        if "invalid load key, 'v'" in error_str:
-            logger.info(f"Using custom unpickler for {file_path} due to 'v' key error")
-            try:
-                # Try with weights_only=True
-                return _original_torch_load(file_path, map_location=map_location, weights_only=True)
-            except Exception as weights_only_error:
-                # Again, handle errors carefully to avoid recursion
-                try:
-                    weights_only_error_str = str(weights_only_error)
-                except:
-                    weights_only_error_str = "Error accessing exception details"
-                    
-                logger.warning(f"weights_only approach failed: {weights_only_error_str}")
-                # Direct unpickling as last resort
-                with open(file_path, 'rb') as f:
-                    try:
-                        unpickler = IgnoreKeyUnpickler(f)
-                        result = unpickler.load()
-                        logger.info("Custom unpickler successful")
-                        return result
-                    except Exception as unpickle_error:
-                        logger.error(f"All loading attempts failed for {file_path}")
-                        raise RuntimeError(f"Cannot load model: {file_path}. Original error: {error_str}")
-        else:
-            # Re-raise the original error
-            raise
+    Returns:
+        Loaded PyTorch model data
+    """
+    logger.info(f"Loading model from {file_path} with map_location={map_location}")
+    
+    # Save original pickle module
+    orig_pickle = pickle
+    
+    # Multiple loading strategies in order of preference
+    loading_strategies = [
+        # Strategy 1: Use original loader with weights_only
+        lambda: _original_torch_load(file_path, map_location=map_location, weights_only=True, **kwargs),
+        
+        # Strategy 2: Use custom unpickler explicitly
+        lambda: _original_torch_load(
+            file_path, 
+            map_location=map_location,
+            pickle_module=pickle,
+            pickle_load_args={'unpickler': IgnoreKeyUnpickler},
+            **kwargs
+        ),
+        
+        # Strategy 3: Direct file handling with custom unpickler
+        lambda: _load_with_direct_unpickler(file_path, map_location=map_location)
+    ]
+    
+    # Try each strategy in order
+    last_error = None
+    for i, strategy in enumerate(loading_strategies):
+        try:
+            logger.info(f"Trying loading strategy {i+1}")
+            result = strategy()
+            logger.info(f"Strategy {i+1} succeeded!")
+            return result
+        except Exception as e:
+            logger.warning(f"Strategy {i+1} failed: {str(e)}")
+            last_error = e
+    
+    # If all strategies fail, raise the last error
+    logger.error(f"All loading strategies failed for {file_path}")
+    raise last_error
+
+
+def _load_with_direct_unpickler(file_path, map_location=None):
+    """Load a model using direct file handling and custom unpickler
+    for maximum compatibility with corrupted files"""
+    logger.info(f"Attempting direct file unpickler strategy for {file_path}")
+    
+    with open(file_path, 'rb') as f:
+        unpickler = IgnoreKeyUnpickler(f)
+        result = unpickler.load()
+        
+        # Handle legacy torch storage metadata if present
+        if map_location is not None and isinstance(result, dict) and '_metadata' in result:
+            for key in result:
+                if isinstance(result[key], torch.storage._UntypedStorage):
+                    result[key] = torch.UntypedStorage.from_buffer(
+                        result[key].numpy(), byte_order='little')
+            
+            result = torch._utils._rebuild_tensor_v2(result, map_location)
+            
+        return result
 
 
 def initialize_models(force_online=False):

@@ -35,68 +35,85 @@ class CustomSTFT(nn.Module):
         # Number of frequency bins for real-valued STFT with onesided=True
         self.freq_bins = self.n_fft // 2 + 1
 
-        # Build window
-        assert window == 'hann', window
+        # Build window and register as buffer
+        window_tensor = self._prepare_window(win_length)
+        self.register_buffer("window", window_tensor)
+
+        # Prepare forward and backward weights
+        self._prepare_forward_weights(window_tensor)
+        self._prepare_backward_weights(window_tensor)
+    
+    def _prepare_window(self, win_length):
+        """Prepare window tensor with proper padding/truncation"""
+        assert win_length > 0, "Window length must be positive"
         window_tensor = torch.hann_window(win_length, periodic=True, dtype=torch.float32)
+        
         if self.win_length < self.n_fft:
             # Zero-pad up to n_fft
             extra = self.n_fft - self.win_length
             window_tensor = F.pad(window_tensor, (0, extra))
         elif self.win_length > self.n_fft:
             window_tensor = window_tensor[: self.n_fft]
-        self.register_buffer("window", window_tensor)
-
-        # Precompute forward DFT (real, imag)
-        # PyTorch stft uses e^{-j 2 pi k n / N} => real=cos(...), imag=-sin(...)
+            
+        return window_tensor
+    
+    def _register_weight_buffer(self, name, data, unsqueeze=True):
+        """Convert numpy array to torch tensor and register as buffer"""
+        tensor = torch.from_numpy(data).float()
+        if unsqueeze:
+            tensor = tensor.unsqueeze(1)
+        self.register_buffer(name, tensor)
+        
+    def _create_angle_matrix(self, n_range, k_range, transpose=False):
+        """Create angle matrix for DFT calculation"""
+        if transpose:
+            angle = 2 * np.pi * np.outer(n_range, k_range) / self.n_fft
+            return angle.T  # Shape: (freq_bins, n_fft)
+        else:
+            return 2 * np.pi * np.outer(k_range, n_range) / self.n_fft  # Shape: (freq_bins, n_fft)
+    
+    def _prepare_forward_weights(self, window_tensor):
+        """Prepare forward STFT weights"""
         n = np.arange(self.n_fft)
         k = np.arange(self.freq_bins)
-        angle = 2 * np.pi * np.outer(k, n) / self.n_fft  # shape (freq_bins, n_fft)
+        
+        # Calculate angle matrix
+        angle = self._create_angle_matrix(n, k)
+        
+        # Calculate real and imaginary components
         dft_real = np.cos(angle)
-        dft_imag = -np.sin(angle)  # note negative sign
-
-        # Combine window and dft => shape (freq_bins, filter_length)
-        # We'll make 2 conv weight tensors of shape (freq_bins, 1, filter_length).
-        forward_window = window_tensor.numpy()  # shape (n_fft,)
-        forward_real = dft_real * forward_window  # (freq_bins, n_fft)
+        dft_imag = -np.sin(angle)  # Note negative sign for PyTorch STFT compatibility
+        
+        # Apply window to both components
+        forward_window = window_tensor.numpy()
+        forward_real = dft_real * forward_window
         forward_imag = dft_imag * forward_window
-
-        # Convert to PyTorch
-        forward_real_torch = torch.from_numpy(forward_real).float()
-        forward_imag_torch = torch.from_numpy(forward_imag).float()
-
-        # Register as Conv1d weight => (out_channels, in_channels, kernel_size)
-        # out_channels = freq_bins, in_channels=1, kernel_size=n_fft
-        self.register_buffer(
-            "weight_forward_real", forward_real_torch.unsqueeze(1)
-        )
-        self.register_buffer(
-            "weight_forward_imag", forward_imag_torch.unsqueeze(1)
-        )
-
-        # Precompute inverse DFT
-        # Real iFFT formula => scale = 1/n_fft, doubling for bins 1..freq_bins-2 if n_fft even, etc.
-        # For simplicity, we won't do the "DC/nyquist not doubled" approach here. 
-        # If you want perfect real iSTFT, you can add that logic. 
-        # This version just yields good approximate reconstruction with Hann + typical overlap.
+        
+        # Register as buffers
+        self._register_weight_buffer("weight_forward_real", forward_real)
+        self._register_weight_buffer("weight_forward_imag", forward_imag)
+    
+    def _prepare_backward_weights(self, window_tensor):
+        """Prepare inverse STFT weights"""
         inv_scale = 1.0 / self.n_fft
         n = np.arange(self.n_fft)
-        angle_t = 2 * np.pi * np.outer(n, k) / self.n_fft  # shape (n_fft, freq_bins)
-        idft_cos = np.cos(angle_t).T  # => (freq_bins, n_fft)
-        idft_sin = np.sin(angle_t).T  # => (freq_bins, n_fft)
-
-        # Multiply by window again for typical overlap-add
-        # We also incorporate the scale factor 1/n_fft
+        k = np.arange(self.freq_bins)
+        
+        # Calculate transposed angle matrix
+        angle_t = self._create_angle_matrix(n, k, transpose=True)
+        
+        # Calculate inverse DFT components
+        idft_cos = np.cos(angle_t)
+        idft_sin = np.sin(angle_t)
+        
+        # Apply scaled window
         inv_window = window_tensor.numpy() * inv_scale
-        backward_real = idft_cos * inv_window  # (freq_bins, n_fft)
+        backward_real = idft_cos * inv_window
         backward_imag = idft_sin * inv_window
-
-        # We'll implement iSTFT as real+imag conv_transpose with stride=hop.
-        self.register_buffer(
-            "weight_backward_real", torch.from_numpy(backward_real).float().unsqueeze(1)
-        )
-        self.register_buffer(
-            "weight_backward_imag", torch.from_numpy(backward_imag).float().unsqueeze(1)
-        )
+        
+        # Register as buffers
+        self._register_weight_buffer("weight_backward_real", backward_real)
+        self._register_weight_buffer("weight_backward_imag", backward_imag)
         
 
 

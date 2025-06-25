@@ -59,18 +59,9 @@ VOICE_PRESETS = {
 
 # IgnoreKeyUnpickler moved to centralized kokoro.model_loader module
             
-def initialize_models(force_online=False):
-    """Initialize TTS models and pipelines using the centralized model loading functionality"""
-    global models, pipelines, VOICES
-    
-    # Log PyTorch version for debugging
-    import torch
-    logger.info(f"Using PyTorch version: {torch.__version__}")
-    
+def authenticate_huggingface():
+    """Authenticate with Hugging Face if token is provided"""
     settings = get_settings()
-    
-    # Login to Hugging Face if token is provided
-    # If no token or login fails, continue with limited functionality
     auth_success = False
     
     if settings.hf_token:
@@ -82,78 +73,84 @@ def initialize_models(force_online=False):
         except Exception as e:
             logger.error(f"Failed to login to Hugging Face: {str(e)}")
             auth_success = False
-    
-    # Use our centralized model loader's context manager for safe loading
-    with SafeModelLoader():
-        try:
-            # Save original offline mode setting
-            original_offline_mode = get_offline_mode()
-            
-            # If force_online is True, temporarily override offline mode
-            if force_online:
-                logger.info("Temporarily forcing online mode for model initialization")
-                set_offline_mode(False)
-                
-            # Set up model instance outside try block so it can be accessed by finally
-            model = None
+    else:
+        logger.warning("No HF token provided, proceeding with limited functionality")
+        
+    return auth_success
 
-            # Try to load model
-            try:
-                logger.info(f"Loading model from {settings.models_dir} (offline_mode={get_offline_mode()})")
-                
-                # First try to load from local or HuggingFace
-                model = KModel(repo_id='hexgrad/Kokoro-82M', models_dir=settings.models_dir)
-                logger.info("Model loaded successfully")
-                models['standard'] = model
-                
-            except Exception as e:
-                logger.error(f"Error loading model: {str(e)}")
-                # If failed with offline mode, try again with online mode if auth worked
-                if get_offline_mode() and auth_success:
-                    set_offline_mode(False)
-                    logger.info("Retrying model loading in online mode")
-                    try:
-                        model = KModel(repo_id='hexgrad/Kokoro-82M', models_dir=settings.models_dir)
-                        logger.info("Online model loading succeeded")
-                        models['standard'] = model
-                    except Exception as fallback_error:
-                        logger.error(f"Error during online fallback load: {str(fallback_error)}")
-                        raise fallback_error
-                else:
-                    # Re-raise original error if we can't try online mode
-                    raise
-                    
-            # Load voice files
-            logger.info("Loading voice files")
-            VOICES = get_voices(settings.models_dir)
-                
-        except Exception as e:
-            import traceback
-            logger.error(f"Error initializing models: {str(e)}")
-            logger.error(f"Full traceback:\n{traceback.format_exc()}")
-            raise
-        finally:
-            # Restore original offline mode setting
-            set_offline_mode(original_offline_mode)
+
+def load_main_model(auth_success, models_dir):
+    """Load the main model with fallback to online mode if needed"""
+    model = None
     
-    # Initialize pipelines
+    try:
+        logger.info(f"Loading model from {models_dir} (offline_mode={get_offline_mode()})")
+        model = KModel(repo_id='hexgrad/Kokoro-82M', models_dir=models_dir)
+        logger.info("Model loaded successfully")
+        return model
+    except Exception as e:
+        logger.error(f"Error loading model: {str(e)}")
+        # If failed with offline mode, try again with online mode if auth worked
+        if get_offline_mode() and auth_success:
+            set_offline_mode(False)
+            logger.info("Retrying model loading in online mode")
+            try:
+                model = KModel(repo_id='hexgrad/Kokoro-82M', models_dir=models_dir)
+                logger.info("Online model loading succeeded")
+                return model
+            except Exception as fallback_error:
+                logger.error(f"Error during online fallback load: {str(fallback_error)}")
+                raise fallback_error
+        else:
+            # Re-raise original error if we can't try online mode
+            raise
+
+
+def setup_pipelines(model, models_dir):
+    """Initialize pipelines for the given model"""
+    local_pipelines = {}
+    
+    # Initialize pipelines for each language code
     for lang_code in 'ab':
-        pipelines[lang_code] = KPipeline(
+        local_pipelines[lang_code] = KPipeline(
             lang_code=lang_code, 
-            model=models['standard'], 
-            models_dir=settings.models_dir
+            model=model, 
+            models_dir=models_dir
         )
     
     # Set lexicon entries
-    pipelines['a'].g2p.lexicon.golds['kokoro'] = 'k\u02c8Ok\u0259\u0279O'
-    pipelines['b'].g2p.lexicon.golds['kokoro'] = 'kˈQkəɹQ'
+    local_pipelines['a'].g2p.lexicon.golds['kokoro'] = 'k\u02c8Ok\u0259\u0279O'
+    local_pipelines['b'].g2p.lexicon.golds['kokoro'] = 'kˈQkəɹQ'
     
-    # Load available voices
+    return local_pipelines
+
+
+def load_voice_safely(voice_path, pipeline):
+    """Load a voice model with multiple fallback strategies"""
+    try:
+        # Use SafeModelLoader context manager for voice loading
+        with SafeModelLoader():
+            try:
+                # First try direct loading with torch.load (which is patched by SafeModelLoader)
+                voice_model = torch.load(voice_path, map_location='cpu')
+                return voice_model
+            except Exception as e:
+                logger.warning(f"Standard loading failed: {str(e)}")
+                # If that fails, try the explicit load_model_safely function
+                logger.warning("Attempting with explicit load_model_safely")
+                return load_model_safely(voice_path, map_location='cpu')
+    except Exception as e:
+        logger.error(f"All voice loading attempts failed: {str(e)}")
+        raise
+
+
+def load_voices(local_pipelines, models_dir):
+    """Load voice models for all supported voices"""
     available_voices = set()
     initial_voices = set(CHOICES.values())
     
     # Check if voice files exist
-    voice_dir = os.path.join(settings.models_dir, 'voices')
+    voice_dir = os.path.join(models_dir, 'voices')
     if not os.path.exists(voice_dir):
         logger.error(f"Voice directory not found: {voice_dir}")
         raise RuntimeError(f"Voice directory not found: {voice_dir}")
@@ -172,55 +169,80 @@ def initialize_models(force_online=False):
             voice_path = os.path.join(voice_dir, voice_file)
             logger.info(f"Loading voice from: {voice_path}")
             
-            # Voice loading with centralized safe loader
             try:
-                # Use SafeModelLoader context manager for voice loading
-                with SafeModelLoader():
-                    try:
-                        # Try standard pipeline loading first
-                        logger.info(f"Loading voice using pipeline: {voice}")
-                        pipelines[voice[0]].load_voice(voice)
-                        available_voices.add(voice)
-                        logger.info(f"Successfully loaded voice: {voice}")
-                    except Exception as voice_error:
-                        logger.warning(f"Standard voice loading failed: {str(voice_error)}")
-                        logger.warning(f"Attempting direct loading for {voice} using centralized loader")
-                        
-                        # Use our centralized safe loader
-                        try:
-                            # Load voice model using centralized loader
-                            voice_model = torch.load(voice_path, map_location='cpu')
-                            
-                            # Manual registration
-                            pipelines[voice[0]].voices[voice] = voice_model
-                            available_voices.add(voice)
-                            logger.info(f"Successfully loaded voice with centralized loader: {voice}")
-                        except Exception as direct_error:
-                            # If that fails too, try the explicit load_model_safely function
-                            logger.warning(f"Direct loading failed: {str(direct_error)}")
-                            logger.warning(f"Final attempt with explicit load_model_safely for {voice}")
-                            
-                            voice_model = load_model_safely(voice_path, map_location='cpu')
-                            pipelines[voice[0]].voices[voice] = voice_model
-                            available_voices.add(voice)
-                            logger.info(f"Successfully loaded voice with fallback loader: {voice}")
-
-            except Exception as e:
-                logger.error(f"All attempts to load voice {voice} failed: {str(e)}")
-                import traceback
-                logger.error(f"Full traceback:\n{traceback.format_exc()}")
-                raise
+                # Try standard pipeline loading first
+                logger.info(f"Loading voice using pipeline: {voice}")
+                local_pipelines[voice[0]].load_voice(voice)
+                available_voices.add(voice)
+                logger.info(f"Successfully loaded voice: {voice}")
+            except Exception as voice_error:
+                logger.warning(f"Standard voice loading failed: {str(voice_error)}")
+                logger.warning(f"Attempting direct loading for {voice}")
+                
+                # Use our safe loader function
+                try:
+                    voice_model = load_voice_safely(voice_path, local_pipelines[voice[0]])
+                    local_pipelines[voice[0]].voices[voice] = voice_model
+                    available_voices.add(voice)
+                    logger.info(f"Successfully loaded voice with safe loader: {voice}")
+                except Exception as e:
+                    logger.error(f"Failed to load voice {voice}: {str(e)}")
+                    import traceback
+                    logger.error(f"Full traceback:\n{traceback.format_exc()}")
         except Exception as e:
-            logger.error(f"Failed to load voice {voice}: {str(e)}")
-            import traceback
-            logger.error(f"Full traceback:\n{traceback.format_exc()}")
+            logger.error(f"Voice loading process failed for {voice}: {str(e)}")
     
     if not available_voices:
         logger.error("No voices were loaded successfully")
         raise RuntimeError("No voices were loaded successfully")
     
-    VOICES.update(available_voices)
-    logger.info(f"Loaded {len(VOICES)} voices successfully: {', '.join(sorted(VOICES))}")
+    return available_voices
+
+
+def initialize_models(force_online=False):
+    """Initialize TTS models and pipelines using the centralized model loading functionality"""
+    global models, pipelines, VOICES
+    
+    # Log PyTorch version for debugging
+    import torch
+    logger.info(f"Using PyTorch version: {torch.__version__}")
+    
+    settings = get_settings()
+    
+    # Use our centralized model loader's context manager for safe loading
+    with SafeModelLoader():
+        try:
+            # Save original offline mode setting
+            original_offline_mode = get_offline_mode()
+            
+            # If force_online is True, temporarily override offline mode
+            if force_online:
+                logger.info("Temporarily forcing online mode for model initialization")
+                set_offline_mode(False)
+            
+            # Step 1: Authenticate with Hugging Face
+            auth_success = authenticate_huggingface()
+            
+            # Step 2: Load the main model
+            model = load_main_model(auth_success, settings.models_dir)
+            models['standard'] = model
+            
+            # Step 3: Initialize pipelines
+            pipelines.update(setup_pipelines(model, settings.models_dir))
+            
+            # Step 4: Load voices
+            available_voices = load_voices(pipelines, settings.models_dir)
+            VOICES.update(available_voices)
+            logger.info(f"Loaded {len(VOICES)} voices successfully: {', '.join(sorted(VOICES))}")
+                
+        except Exception as e:
+            import traceback
+            logger.error(f"Error initializing models: {str(e)}")
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
+            raise
+        finally:
+            # Restore original offline mode setting
+            set_offline_mode(original_offline_mode)
 
 
 def get_models():

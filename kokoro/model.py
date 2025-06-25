@@ -11,10 +11,7 @@ import os
 
 # Import from centralized model_loader module
 from kokoro.model_loader import (
-    load_model_safely, 
     cached_hub_download, 
-    set_offline_mode, 
-    get_offline_mode,
     SafeModelLoader
 )
 

@@ -70,7 +70,8 @@ async def text_to_speech(request: TTSRequest):
         )
         
         if audio_data is None:
-            raise HTTPException(status_code=500, detail="Audio generation failed")
+            logger.error("Audio generation failed - returned None")
+            raise HTTPException(status_code=500, detail="Audio generation failed - returned None")
 
         # Handle different quality and format settings
         if quality == 'auto' or format == 'auto':
@@ -110,16 +111,16 @@ async def batch_text_to_speech(request: TTSBatchRequest):
             
             # Apply presets based on fiction flag
             if is_fiction:
-                # Bella preset for literature
-                voice = 'af_heart'
+                # Fiction preset
+                voice = 'af_sky'
                 speed = 1.1
                 breathiness = 0.1
                 tenseness = 0.1
                 jitter = 0.15
                 sultry = 0.1
             else:
-                # Sky preset for articles
-                voice = 'af_sky'
+                # Non-fiction preset
+                voice = 'af_heart'
                 speed = 1.0
                 breathiness = 0.15
                 tenseness = 0.5

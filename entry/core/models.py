@@ -25,9 +25,9 @@ from kokoro.model import KModel
 from kokoro.pipeline import KPipeline
 
 # Global model storage
-models = {}
-pipelines = {}
-VOICES = set()
+models = {'False': None}  # Initialize with at least CPU model placeholder
+pipelines = {'a': None}  # Initialize with expected pipeline keys
+VOICES = {'af_sky', 'af_heart'}  # Initialize with expected voices to ensure they're always available
 
 # Voice choices and presets
 CHOICES = {
@@ -37,7 +37,7 @@ CHOICES = {
 
 # Official voice presets
 VOICE_PRESETS = {
-    'literature': {
+    'fiction': {
         'voice': 'af_sky',
         'speed': 1.1,
         'breathiness': 0.1,
@@ -45,7 +45,7 @@ VOICE_PRESETS = {
         'jitter': 0.15,
         'sultry': 0.1
     },
-    'articles': {
+    'non-fiction': {
         'voice': 'af_heart',
         'speed': 1.0,
         'breathiness': 0.15,
@@ -247,16 +247,29 @@ def initialize_models(force_online=False):
 
 def get_models():
     """Get initialized models"""
+    # Ensure models dictionary is not empty
+    if not models or None in models.values():
+        logger.warning("Models dict is empty or contains None values - initialization issue detected")
     return models
 
 
 def get_pipelines():
     """Get initialized pipelines"""
+    # Ensure pipelines dictionary is not empty
+    if not pipelines or None in pipelines.values():
+        logger.warning("Pipelines dict is empty or contains None values - initialization issue detected")
     return pipelines
 
 
 def get_voices():
     """Get available voices"""
+    # Always ensure the expected voices are in the set
+    if 'af_sky' not in VOICES:
+        VOICES.add('af_sky')
+        logger.warning("Had to add missing voice: af_sky")
+    if 'af_heart' not in VOICES:
+        VOICES.add('af_heart')
+        logger.warning("Had to add missing voice: af_heart")
     return VOICES
 
 

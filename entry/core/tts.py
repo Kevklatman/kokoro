@@ -31,15 +31,15 @@ def select_voice_and_preset(
     Priority:
       1. If preset_name is given and valid, use preset (voice and params).
       2. If requested_voice is given, use it with no preset.
-      3. If neither is given, use af_heart for fiction (literature) and af_sky for non-fiction (articles).
+      3. If neither is given, use af_sky for fiction and af_heart for non-fiction.
     Returns (voice_id, emotion_preset_dict or None)
     """
     voice_presets = get_voice_presets()
     
-    # ENFORCE: Always use preset values for literature (fiction) and articles (non-fiction)
+    # ENFORCE: Always use preset values for fiction and non-fiction
     if fiction is not None:
         if fiction:
-            # Literature: af_heart preset (override everything)
+            # Fiction: af_sky preset (override everything)
             return 'af_sky', {
                 'speed': 1.1,
                 'breathiness': 0,
@@ -48,7 +48,7 @@ def select_voice_and_preset(
                 'sultry': 0
             }
         else:
-            # Articles: af_sky preset (override everything)
+            # Non-fiction: af_heart preset (override everything)
             return 'af_heart', {
                 'speed': 1.0,
                 'breathiness': 0,

@@ -24,10 +24,16 @@ from entry.config import get_settings
 from kokoro.model import KModel
 from kokoro.pipeline import KPipeline
 
-# Global model storage
-models = {'False': None}  # Initialize with at least CPU model placeholder
-pipelines = {'a': None}  # Initialize with expected pipeline keys
-VOICES = {'af_sky', 'af_heart'}  # Initialize with expected voices to ensure they're always available
+# Global model storage - will be populated during initialization
+models = {}
+pipelines = {}
+VOICES = set()
+
+# Flag to track if voices are manually added for debug
+MANUAL_VOICES_ADDED = False
+
+# Default model - populated during initialization
+default_model = None
 
 # Voice choices and presets
 CHOICES = {
@@ -201,7 +207,7 @@ def load_voices(local_pipelines, models_dir):
 
 def initialize_models(force_online=False):
     """Initialize TTS models and pipelines using the centralized model loading functionality"""
-    global models, pipelines, VOICES
+    global models, pipelines, VOICES, default_model, MANUAL_VOICES_ADDED
     
     # Log PyTorch version for debugging
     import torch
@@ -225,15 +231,41 @@ def initialize_models(force_online=False):
             
             # Step 2: Load the main model
             model = load_main_model(auth_success, settings.models_dir)
+            default_model = model  # Store as default model
+            
+            # Clear any existing data and start fresh
+            models.clear()
+            pipelines.clear()
+            VOICES.clear()
+            
+            # Add models (ensure CPU model exists)
             models['standard'] = model
+            models[False] = model  # CPU model
             
             # Step 3: Initialize pipelines
-            pipelines.update(setup_pipelines(model, settings.models_dir))
+            local_pipelines = setup_pipelines(model, settings.models_dir)
+            pipelines.update(local_pipelines)
+            logger.info(f"Initialized pipelines: {list(pipelines.keys())}")
             
             # Step 4: Load voices
             available_voices = load_voices(pipelines, settings.models_dir)
             VOICES.update(available_voices)
             logger.info(f"Loaded {len(VOICES)} voices successfully: {', '.join(sorted(VOICES))}")
+            
+            # Ensure critical voices are available
+            if 'af_sky' not in VOICES:
+                VOICES.add('af_sky')
+                MANUAL_VOICES_ADDED = True
+                logger.warning("Manually added missing critical voice: af_sky")
+            
+            if 'af_heart' not in VOICES:
+                VOICES.add('af_heart')
+                MANUAL_VOICES_ADDED = True
+                logger.warning("Manually added missing critical voice: af_heart")
+                
+            # Validate initialization
+            if len(models) < 1 or len(pipelines) < 1 or len(VOICES) < 1:
+                raise RuntimeError(f"Initialization incomplete: models={len(models)}, pipelines={len(pipelines)}, voices={len(VOICES)}")
                 
         except Exception as e:
             import traceback
@@ -250,6 +282,9 @@ def get_models():
     # Ensure models dictionary is not empty
     if not models or None in models.values():
         logger.warning("Models dict is empty or contains None values - initialization issue detected")
+        if default_model is not None:
+            logger.warning("Recovering from missing models with default_model")
+            models[False] = default_model  # Add CPU model as fallback
     return models
 
 
@@ -258,6 +293,15 @@ def get_pipelines():
     # Ensure pipelines dictionary is not empty
     if not pipelines or None in pipelines.values():
         logger.warning("Pipelines dict is empty or contains None values - initialization issue detected")
+        # If we need to recreate pipelines, we need both the model and the models directory
+        if default_model is not None and len(models) > 0:
+            try:
+                logger.warning("Attempting to recover pipelines")
+                settings = get_settings()
+                new_pipelines = setup_pipelines(default_model, settings.models_dir)
+                pipelines.update(new_pipelines)
+            except Exception as e:
+                logger.error(f"Pipeline recovery failed: {str(e)}")
     return pipelines
 
 
@@ -270,6 +314,11 @@ def get_voices():
     if 'af_heart' not in VOICES:
         VOICES.add('af_heart')
         logger.warning("Had to add missing voice: af_heart")
+    
+    # If we had to manually add voices, warn about potential issues
+    if MANUAL_VOICES_ADDED:
+        logger.warning("Using manually added voices - voice models may not be properly loaded")
+        
     return VOICES
 
 

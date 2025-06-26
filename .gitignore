@@ -215,3 +215,5 @@ models/samples/*.wav
 models/eval/*.jpeg
 kokoro.js/voices/*.bin
 kokoro-py312-env/bin/ruff
+# Ignore all Kokoro model blobs
+models/Kokoro-82M/models--hexgrad--Kokoro-82M/blobs/*

@@ -202,8 +202,16 @@ LICENSE
 
 test_tts.mp3
 
+kokoro_front_and_back.code-workspace
+
 
 
 # Voice model files
 
 # ... existing code ...
+
+# Ignore large or unnecessary files
+models/samples/*.wav
+models/eval/*.jpeg
+kokoro.js/voices/*.bin
+kokoro-py312-env/bin/ruff

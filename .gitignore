@@ -32,7 +32,7 @@ start-dev-server.sh
 generate_audio.py
 generate_audio_cli.py
 
-
+audio_tests/
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.

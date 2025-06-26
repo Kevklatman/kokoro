@@ -22,6 +22,8 @@ import time
 DEFAULT_LOCAL_HOST = "localhost"
 DEFAULT_LOCAL_PORT = 8080
 DEFAULT_CLOUD_HOST = "apiforswifttts-696551753574.europe-west1.run.app"
+DEFAULT_LOCAL_URL = f"http://{DEFAULT_LOCAL_HOST}:{DEFAULT_LOCAL_PORT}"
+DEFAULT_CLOUD_URL = f"https://{DEFAULT_CLOUD_HOST}"
 
 def play_audio(audio_data: bytes) -> None:
     """Play audio using the system's default audio player"""
@@ -30,7 +32,7 @@ def play_audio(audio_data: bytes) -> None:
         temp_file.write(audio_data)
     
     try:
-        console.print(f"[green]Playing audio from {temp_file_path}...[/green]")
+        print(f"Playing audio from {temp_file_path}...")
         
         # Cross-platform audio playing
         if sys.platform == "darwin":  # macOS
@@ -40,7 +42,7 @@ def play_audio(audio_data: bytes) -> None:
         else:  # Linux and others
             subprocess.run(["xdg-open", temp_file_path], check=True)
     except Exception as e:
-        console.print(f"[red]Error playing audio: {str(e)}[/red]")
+        print(f"Error playing audio: {str(e)}")
     finally:
         # Clean up the temp file after a delay to ensure it can be played
         time.sleep(1)  # Give time for the player to open the file
@@ -53,25 +55,113 @@ def save_audio(audio_data: bytes, filename: str) -> None:
     """Save audio to a file"""
     with open(filename, "wb") as f:
         f.write(audio_data)
-    console.print(f"[green]Audio saved to {filename}[/green]")
+    print(f"Audio saved to {filename}")
+
+def make_http_request(url: str, method: str = "GET", headers: Dict = None, body: Dict = None, timeout: int = 10) -> Tuple[int, Any]:
+    """Make an HTTP request using standard library and return status code and response data"""
+    parsed_url = urlparse(url)
+    is_https = parsed_url.scheme == 'https'
+    host = parsed_url.netloc
+    path = parsed_url.path
+    
+    # Add query parameters if present
+    if parsed_url.query:
+        path = f"{path}?{parsed_url.query}"
+    
+    if headers is None:
+        headers = {}
+    
+    # Set default headers
+    if method in ["POST", "PUT", "PATCH"] and body is not None:
+        headers["Content-Type"] = "application/json"
+    
+    try:
+        if is_https:
+            conn = HTTPSConnection(host, timeout=timeout)
+        else:
+            conn = HTTPConnection(host, timeout=timeout)
+        
+        # Convert body to JSON if present
+        json_body = None
+        if body is not None:
+            json_body = json.dumps(body).encode('utf-8')
+        
+        conn.request(method, path, json_body, headers)
+        response = conn.getresponse()
+        
+        # Get status code and response body
+        status_code = response.status
+        
+        # Handle redirects manually
+        if status_code in (301, 302, 303, 307, 308):
+            location = response.getheader('Location')
+            if location:
+                print(f"Following redirect to {location}")
+                # If it's a relative URL, construct the full URL
+                if location.startswith('/'):
+                    redirect_url = f"{parsed_url.scheme}://{host}{location}"
+                else:
+                    redirect_url = location
+                # Follow the redirect with same method for 307/308, GET for others
+                if status_code in (307, 308):
+                    return make_http_request(redirect_url, method, headers, body, timeout)
+                else:
+                    return make_http_request(redirect_url, "GET", headers, None, timeout)
+        
+        # Read the response data
+        response_data = response.read()
+        
+        # Parse JSON response if possible
+        if response_data:
+            try:
+                return status_code, json.loads(response_data.decode('utf-8'))
+            except json.JSONDecodeError:
+                return status_code, response_data
+        
+        return status_code, None
+    
+    except Exception as e:
+        print(f"Error making HTTP request: {str(e)}")
+        return 500, None
+    finally:
+        if 'conn' in locals():
+            conn.close()
 
 def get_available_voices(api_url: str) -> List[str]:
     """Get list of available voices from the API"""
-    try:
-        response = requests.get(f"{api_url}/voices", timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            if isinstance(data, list):
-                return data
-            # Handle case where API returns a different structure
-            if isinstance(data, dict) and "voices" in data:
-                return data["voices"]
-        console.print(f"[yellow]Couldn't get voices from API: {response.status_code}[/yellow]")
-    except requests.RequestException as e:
-        console.print(f"[red]Error connecting to API: {str(e)}[/red]")
+    # Our custom Kokoro voices - these should always be available
+    kokoro_voices = ["af_sky", "af_heart"]
     
-    # Return a default list if we can't get from API
-    return ["af_sky", "af_heart"]
+    print(f"Fetching available voices from {api_url}/voices...")
+    status_code, data = make_http_request(f"{api_url}/voices")
+    
+    if status_code == 200 and data is not None:
+        api_voices = []
+        
+        # Handle different response formats
+        if isinstance(data, list):
+            api_voices = data
+        elif isinstance(data, dict) and "voices" in data:
+            api_voices = data["voices"]
+        elif isinstance(data, dict) and "status" in data and data.get("status") == "healthy":
+            # Handle health endpoint format
+            if "voices" in data:
+                api_voices = data["voices"]
+                
+        # Combine with our custom voices and remove duplicates
+        all_voices = list(set(api_voices + kokoro_voices))
+        
+        # If we got voices from the API, log success
+        if api_voices:
+            print(f"Retrieved {len(api_voices)} voices from API")
+        
+        return all_voices
+    else:
+        print(f"Couldn't get voices from API: {status_code}")
+    
+    # Return our default Kokoro voices if we can't get from API
+    print("Using default Kokoro voices")
+    return kokoro_voices
 
 def generate_audio(
     api_url: str,
@@ -84,74 +174,76 @@ def generate_audio(
 ) -> Optional[bytes]:
     """Generate audio from text using the TTS API"""
     
-    console.print(f"[blue]Generating audio for: '{text[:50]}{'...' if len(text) > 50 else ''}'[/blue]")
-    console.print(f"[blue]Using voice: {voice}, quality: {quality}, format: {format}[/blue]")
+    print(f"Generating audio for: '{text[:50]}{'...' if len(text) > 50 else ''}'")
+    print(f"Using voice: {voice}, quality: {quality}, format: {format}")
     
-    # Prepare the request
+    # Prepare the request payload
     payload = {
         "text": text,
         "voice": voice,
         "quality": quality,
-        "format": format
+        "format": format,
+        "fiction": voice == "af_sky"  # Set fiction flag based on voice
     }
     
-    try:
-        with Progress() as progress:
-            task = progress.add_task("[cyan]Generating audio...", total=None)
-            
-            # Make the API request
-            response = requests.post(
-                f"{api_url}/tts", 
-                json=payload,
-                timeout=60  # TTS can take a while for long texts
-            )
-            
-            progress.update(task, completed=True, total=1)
-            
-            if response.status_code != 200:
-                console.print(f"[red]Error: API returned status code {response.status_code}[/red]")
-                console.print(f"[red]Response: {response.text}[/red]")
-                return None
-            
-            # Handle the response based on content type
-            if "audio/" in response.headers.get("Content-Type", ""):
-                audio_data = response.content
-                console.print(f"[green]Successfully generated audio ({len(audio_data)/1024:.1f} KB)[/green]")
+    print("Sending request to server...")
+    
+    # Make the API request
+    status_code, response_data = make_http_request(
+        url=f"{api_url}/tts",
+        method="POST", 
+        body=payload,
+        timeout=60  # TTS can take a while for long texts
+    )
+    
+    if status_code != 200:
+        print(f"Error: API returned status code {status_code}")
+        if isinstance(response_data, dict):
+            print(f"Response: {json.dumps(response_data)}")
+        return None
+    
+    # Parse the response data
+    # For binary audio data (bytes)
+    if isinstance(response_data, bytes):
+        audio_data = response_data
+        print(f"Successfully generated audio ({len(audio_data)/1024:.1f} KB)")
+        
+        # Save the audio if requested
+        if save_path:
+            save_audio(audio_data, save_path)
+        
+        # Play the audio if requested
+        if play:
+            play_audio(audio_data)
+        
+        return audio_data
+        
+    # For JSON responses (base64 encoded audio)
+    elif isinstance(response_data, dict):
+        try:
+            # Try different known formats for base64 audio
+            audio_base64 = None
+            if "audio" in response_data and isinstance(response_data["audio"], str):
+                audio_base64 = response_data["audio"]
+            elif "audio_base64" in response_data:
+                audio_base64 = response_data["audio_base64"]
                 
-                # Save the audio if requested
+            if audio_base64:
+                audio_data = base64.b64decode(audio_base64)
+                print(f"Successfully decoded base64 audio ({len(audio_data)/1024:.1f} KB)")
+                
                 if save_path:
                     save_audio(audio_data, save_path)
                 
-                # Play the audio if requested
                 if play:
                     play_audio(audio_data)
                 
                 return audio_data
-            elif response.headers.get("Content-Type") == "application/json":
-                # Handle case where response might be base64-encoded
-                try:
-                    data = response.json()
-                    if "audio" in data and isinstance(data["audio"], str):
-                        # Assume base64 encoding
-                        audio_data = base64.b64decode(data["audio"])
-                        console.print(f"[green]Successfully decoded base64 audio ({len(audio_data)/1024:.1f} KB)[/green]")
-                        
-                        if save_path:
-                            save_audio(audio_data, save_path)
-                        
-                        if play:
-                            play_audio(audio_data)
-                        
-                        return audio_data
-                except Exception as e:
-                    console.print(f"[red]Error decoding JSON response: {str(e)}[/red]")
-            
-            console.print(f"[red]Unexpected response format: {response.headers.get('Content-Type')}[/red]")
-            return None
-            
-    except requests.RequestException as e:
-        console.print(f"[red]Error connecting to API: {str(e)}[/red]")
-        return None
+        except Exception as e:
+            print(f"Error decoding base64 audio: {str(e)}")
+    
+    print("Error: Unexpected response format")
+    return None
 
 def interactive_mode(api_url: str) -> None:
     """Run an interactive CLI session"""

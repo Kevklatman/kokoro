@@ -59,7 +59,7 @@ def save_audio(audio_data: bytes, filename: str) -> None:
 
 def make_http_request(url: str, method: str = "GET", headers: Dict = None, body: Dict = None, timeout: int = 10) -> Tuple[int, Any]:
     """Make an HTTP request using standard library and return status code and response data"""
-    parsed_url = urlparse(url)
+    parsed_url = urllib.parse.urlparse(url)
     is_https = parsed_url.scheme == 'https'
     host = parsed_url.netloc
     path = parsed_url.path
@@ -77,9 +77,9 @@ def make_http_request(url: str, method: str = "GET", headers: Dict = None, body:
     
     try:
         if is_https:
-            conn = HTTPSConnection(host, timeout=timeout)
+            conn = http.client.HTTPSConnection(host, timeout=timeout)
         else:
-            conn = HTTPConnection(host, timeout=timeout)
+            conn = http.client.HTTPConnection(host, timeout=timeout)
         
         # Convert body to JSON if present
         json_body = None
@@ -247,55 +247,73 @@ def generate_audio(
 
 def interactive_mode(api_url: str) -> None:
     """Run an interactive CLI session"""
-    console.print(f"[bold green]Kokoro TTS Interactive CLI[/bold green]")
-    console.print(f"[bold blue]Connected to: {api_url}[/bold blue]")
+    print(f"Kokoro TTS Interactive CLI")
+    print(f"Connected to: {api_url}")
 
     # Get available voices
     voices = get_available_voices(api_url)
-    console.print(f"[bold]Available voices:[/bold] {', '.join(voices) or 'Unknown (using defaults)'}")
+    print(f"Available voices: {', '.join(voices) or 'Unknown (using defaults)'}")
 
     while True:
-        console.rule("[bold]New TTS Request[/bold]")
+        print("\n" + "="*50)
+        print("New TTS Request")
+        print("="*50)
         
         # Get user input
-        text = Prompt.ask("[bold]Enter text to convert to speech[/bold] (or 'q' to quit)")
+        text = input("Enter text to convert to speech (or 'q' to quit): ")
         if text.lower() == 'q':
             break
         
         # Select voice
         voice_options = voices if voices else ["en_US_1", "en_US_2", "en_GB_1"]
-        voice_idx = 0 if not voice_options else Prompt.ask(
-            "[bold]Select voice[/bold]", 
-            choices=[str(i) for i in range(len(voice_options))],
-            default="0"
-        )
-        voice = voice_options[int(voice_idx)]
+        if len(voice_options) > 1:
+            print("Available voices:")
+            for i, voice in enumerate(voice_options):
+                print(f"  {i}: {voice}")
+            try:
+                voice_idx = int(input(f"Select voice (0-{len(voice_options)-1}): "))
+                voice = voice_options[voice_idx]
+            except (ValueError, IndexError):
+                voice = voice_options[0]
+                print(f"Invalid selection, using: {voice}")
+        else:
+            voice = voice_options[0]
         
         # Select quality
-        quality = Prompt.ask(
-            "[bold]Select quality[/bold]", 
-            choices=["high", "medium", "low"], 
-            default="medium"
-        )
+        quality_options = ["high", "medium", "low"]
+        print("Quality options:")
+        for i, q in enumerate(quality_options):
+            print(f"  {i}: {q}")
+        try:
+            quality_idx = int(input("Select quality (0-2): "))
+            quality = quality_options[quality_idx]
+        except (ValueError, IndexError):
+            quality = "medium"
+            print(f"Invalid selection, using: {quality}")
         
         # Select format
-        format = Prompt.ask(
-            "[bold]Select format[/bold]", 
-            choices=["mp3", "wav"], 
-            default="mp3"
-        )
+        format_options = ["mp3", "wav"]
+        print("Format options:")
+        for i, f in enumerate(format_options):
+            print(f"  {i}: {f}")
+        try:
+            format_idx = int(input("Select format (0-1): "))
+            format = format_options[format_idx]
+        except (ValueError, IndexError):
+            format = "mp3"
+            print(f"Invalid selection, using: {format}")
         
         # Choose whether to save
-        save = Confirm.ask("[bold]Save to file?[/bold]", default=False)
+        save_choice = input("Save to file? (y/n): ").lower().strip()
         save_path = None
-        if save:
-            save_path = Prompt.ask(
-                "[bold]Enter save path[/bold]", 
-                default=f"output_{int(time.time())}.{format}"
-            )
+        if save_choice in ['y', 'yes']:
+            save_path = input(f"Enter save path (default: output_{int(time.time())}.{format}): ")
+            if not save_path:
+                save_path = f"output_{int(time.time())}.{format}"
         
         # Choose whether to play
-        play = Confirm.ask("[bold]Play audio?[/bold]", default=True)
+        play_choice = input("Play audio? (y/n): ").lower().strip()
+        play = play_choice not in ['n', 'no']
         
         # Generate the audio
         generate_audio(
@@ -395,7 +413,7 @@ def main() -> None:
         try:
             interactive_mode(api_url)
         except KeyboardInterrupt:
-            console.print("\n[yellow]Exiting...[/yellow]")
+            print("\nExiting...")
             sys.exit(0)
 
 if __name__ == "__main__":

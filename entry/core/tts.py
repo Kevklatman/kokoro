@@ -91,10 +91,15 @@ def generate_audio(
     sultry: float = 0.0
 ) -> Tuple[Tuple[int, np.ndarray], str]:
     """Core function that generates audio from text"""
+    from loguru import logger
     settings = get_settings()
     pipelines = get_pipelines()
     models = get_models()
     voices = get_voices()
+    
+    logger.info(f"Generating audio for voice '{voice}' with speed={speed}, use_gpu={use_gpu}")
+    logger.info(f"Available pipelines: {list(pipelines.keys())}")
+    logger.info(f"Available voices: {list(voices)}")
     
     if voice not in voices:
         raise HTTPException(
@@ -102,8 +107,40 @@ def generate_audio(
             detail=f"Voice '{voice}' not found. Available voices: {list(voices)}"
         )
     
-    pipeline = pipelines[voice[0]]
-    pack = pipeline.load_voice(voice)
+    # Ensure voice prefix exists as a pipeline key
+    voice_prefix = voice[0]  # First character of voice name
+    if voice_prefix not in pipelines:
+        available_keys = list(pipelines.keys())
+        logger.error(f"Missing pipeline for voice prefix '{voice_prefix}'. Available: {available_keys}")
+        
+        # Try to use any available pipeline as a fallback
+        if len(available_keys) > 0:
+            voice_prefix = available_keys[0]
+            logger.warning(f"Using fallback pipeline key '{voice_prefix}' for voice '{voice}'")
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail=f"No TTS pipelines available. System initialization may be incomplete."
+            )
+    
+    # Get the pipeline safely
+    try:    
+        pipeline = pipelines[voice_prefix]
+        # Safely load voice pack
+        try:
+            pack = pipeline.load_voice(voice)
+        except Exception as voice_error:
+            logger.error(f"Failed to load voice pack for '{voice}': {str(voice_error)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to load voice '{voice}': {str(voice_error)}"
+            )
+    except Exception as e:
+        logger.error(f"Error accessing pipeline for voice '{voice}': {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"TTS pipeline error: {str(e)}"
+        )
     use_gpu = use_gpu and torch.cuda.is_available() and settings.cuda_available
     
     all_audio_chunks = []

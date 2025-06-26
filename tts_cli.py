@@ -191,7 +191,8 @@ def get_available_voices(host: str, use_ssl: bool = False, auth_token: Optional[
             return data["voices"]
     
     print_colored("Could not retrieve voices from API, using default set", "yellow")
-    return ["en_US_1", "en_US_2", "en_GB_1"]  # Default fallback
+    # Include af_sky and af_heart in the default fallback voices
+    return ["en_US_1", "en_US_2", "en_GB_1", "af_sky", "af_heart"]  # Default fallback
 
 def generate_audio(
     host: str, 

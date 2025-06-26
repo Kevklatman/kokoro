@@ -31,6 +31,7 @@ start-dev-server.sh
 
 tts_cli.py
 generate_audio.py
+generate_audio_cli.py
 
 
 # PyInstaller

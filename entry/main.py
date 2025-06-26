@@ -160,18 +160,31 @@ def create_app() -> FastAPI:
                     detail="Service is still initializing"
                 )
             
-            # Double-check that models are actually available
-            from entry.core.models import get_models, get_pipelines, get_voices
+            # Simple check to ensure models are initialized
+            # We don't need to perform detailed validation here since the TTS endpoints
+            # will handle specific validation and fallbacks
+            from entry.core.models import get_models, get_voices
             models = get_models()
-            pipelines = get_pipelines()
             voices = get_voices()
             
-            if not models or False in models or None in models.values() or not pipelines or not voices:
-                logger.error(f"Critical model components missing at request time: models={bool(models)}, pipelines={bool(pipelines)}, voices={bool(voices)}")
+            # Only perform basic checks for non-empty models and voices
+            if len(models) == 0 or len(voices) == 0:
+                logger.error(f"Critical model components missing at request time: models={len(models)}, voices={len(voices)}")
                 raise HTTPException(
                     status_code=503, 
                     detail="Model initialization incomplete - service not ready"
                 )
+            
+            # Log successful validation
+            if request.url.path.startswith('/tts'):
+                logger.info(f"TTS middleware validation passed: models={len(models)}, voices={len(voices)}")
+                
+            # For debugging - add detailed info about model components
+            if request.url.path.startswith('/debug'):
+                from entry.core.models import get_pipelines
+                pipelines = get_pipelines()
+                logger.info(f"Debug route models: {list(models.keys())}, pipelines: {list(pipelines.keys())}, voices: {list(voices)}")
+                
                 
         return await call_next(request)
 

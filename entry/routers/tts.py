@@ -24,6 +24,18 @@ router = APIRouter()
 async def text_to_speech(request: TTSRequest):
     """Convert text to speech and return audio"""
     try:
+        # Validate that models are loaded and accessible
+        from entry.core.models import get_models, get_pipelines, get_voices
+        # Pre-log the current state for diagnostics
+        models = get_models()
+        pipelines = get_pipelines()
+        voices = get_voices()
+        logger.info(f"TTS endpoint has access to: models={len(models)}, pipelines={len(pipelines)}, voices={len(voices)}")
+        
+        if not models or not pipelines or not voices:
+            logger.error(f"Unable to process TTS request - missing components: models={bool(models)}, pipelines={bool(pipelines)}, voices={bool(voices)}")
+            raise HTTPException(status_code=503, detail="TTS system not fully initialized")
+        
         # Extract request parameters
         text = request.text
         voice = request.voice
@@ -172,6 +184,17 @@ async def batch_text_to_speech(request: TTSBatchRequest):
 async def text_to_speech_base64(request: TTSRequest):
     """Convert text to speech and return audio as base64 encoded string"""
     try:
+        # Validate that models are loaded and accessible
+        from entry.core.models import get_models, get_pipelines, get_voices
+        models = get_models()
+        pipelines = get_pipelines()
+        voices = get_voices()
+        logger.info(f"Base64 TTS endpoint has access to: models={len(models)}, pipelines={len(pipelines)}, voices={len(voices)}")
+        
+        if not models or not pipelines or not voices:
+            logger.error(f"Unable to process Base64 TTS request - missing components: models={bool(models)}, pipelines={bool(pipelines)}, voices={bool(voices)}")
+            raise HTTPException(status_code=503, detail="TTS system not fully initialized")
+        
         selected_voice, emotion_preset = select_voice_and_preset(
             request.voice, fiction=request.fiction
         )

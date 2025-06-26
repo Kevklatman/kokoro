@@ -169,6 +169,12 @@ def play_audio(audio_data: bytes, format="mp3") -> None:
 
 def save_audio(audio_data: bytes, filename: str) -> None:
     """Save audio to file"""
+    # Ensure the audio_tests directory exists
+    audio_tests_dir = "audio_tests"
+    os.makedirs(audio_tests_dir, exist_ok=True)
+    # If filename is not already in audio_tests, prepend it
+    if not filename.startswith(audio_tests_dir + os.sep):
+        filename = os.path.join(audio_tests_dir, filename)
     with open(filename, "wb") as f:
         f.write(audio_data)
     print_colored(f"Audio saved to {filename}", "green")
@@ -377,6 +383,8 @@ def interactive_mode(host: str, use_ssl: bool, auth_token: Optional[str] = None,
         save_path = None
         if save:
             default_filename = f"output_{int(time.time())}.{format}"
+            # Prepend audio_tests dir to default
+            default_filename = os.path.join("audio_tests", default_filename)
             save_path = input_with_default("Enter filename", default_filename)
         
         # Play option
@@ -493,7 +501,8 @@ def main() -> None:
     # Determine mode (direct or interactive)
     if args.text:
         # Direct mode
-        output_path = args.output or f"output_{int(time.time())}.{args.format}"
+        # Save to audio_tests by default
+        output_path = args.output or os.path.join("audio_tests", f"output_{int(time.time())}.{args.format}")
         generate_audio(
             host=host,
             text=args.text,

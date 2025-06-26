@@ -218,6 +218,12 @@ kokoro-py312-env/bin/ruff
 # Ignore all Kokoro model blobs
 models/Kokoro-82M/models--hexgrad--Kokoro-82M/blobs/*
 
+kokoro-backup/
 
 launch.json
 output_1750909745.mp3
+output_1750909811.mp3
+.gitignore
+output_1750909865.mp3
+.gitignore
+output_1750909833.mp3

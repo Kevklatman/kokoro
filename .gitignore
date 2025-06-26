@@ -29,7 +29,6 @@ MANIFEST
 nginx-kokoro.conf
 start-dev-server.sh
 
-tts_cli.py
 generate_audio.py
 generate_audio_cli.py
 
@@ -228,3 +227,7 @@ output_1750909811.mp3
 output_1750909865.mp3
 .gitignore
 output_1750909833.mp3
+
+# Ignore CLI files
+tts_cli.py
+generate_audio.py

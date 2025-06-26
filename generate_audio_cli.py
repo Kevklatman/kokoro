@@ -71,7 +71,7 @@ def get_available_voices(api_url: str) -> List[str]:
         console.print(f"[red]Error connecting to API: {str(e)}[/red]")
     
     # Return a default list if we can't get from API
-    return ["en_US_1", "en_US_2", "en_GB_1"]
+    return ["af_sky", "af_heart"]
 
 def generate_audio(
     api_url: str,

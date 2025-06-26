@@ -1,0 +1,13 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Your Debug Configuration", 
+            "type": "your_debugger_type", // e.g., "python", "node", "chrome", etc.
+            "request": "launch",       // or "attach"
+            "program": "path/to/your/program", // e.g., "${file}", "app.js", etc.
+            "console": "integratedTerminal", 
+            "justMyCode": false          // This is the correct location
+        }
+    ]
+}

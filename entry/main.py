@@ -13,15 +13,16 @@ from loguru import logger
 from dotenv import load_dotenv
 
 from entry.config import get_settings
-from entry.routers import tts, jobs, voices, streams
+from entry.routers import tts, jobs, voices, streams, debug
 from entry.core.models import initialize_models, get_voices
 
-# Global flag to track if models are loaded
+# Global flags to track model loading state
 MODELS_LOADED = False
-
-# Global state
 initialized = False
 initialization_error = None
+
+# Add thread lock for synchronization
+model_init_lock = threading.RLock()
 
 def create_app() -> FastAPI:
     """Create and configure FastAPI application"""
@@ -56,22 +57,38 @@ def create_app() -> FastAPI:
         def init_models_thread():
             global MODELS_LOADED, initialized, initialization_error
             try:
-                # Determine if we need to force online mode for container initialization
-                force_online = False
-                if os.environ.get('CONTAINER_ENV', '').lower() == 'true' or \
-                   os.environ.get('K_SERVICE', '').lower() != '':
-                    force_online = not os.path.exists(os.path.join(os.getcwd(), 'models', 'Kokoro-82M'))
-                    if force_online:
-                        logger.info("Container environment detected, forcing online mode for first run")
-                
-                logger.info("Loading models in background thread")
-                initialize_models(force_online=force_online)
-                logger.info("Models loaded successfully")
-                MODELS_LOADED = True
-                initialized = True  # Set initialized flag when models are loaded
-                initialization_error = None  # Clear any previous errors
+                # Use thread lock for safe initialization
+                with model_init_lock:
+                    # Determine if we need to force online mode for container initialization
+                    force_online = False
+                    if os.environ.get('CONTAINER_ENV', '').lower() == 'true' or \
+                       os.environ.get('K_SERVICE', '').lower() != '':
+                        force_online = not os.path.exists(os.path.join(os.getcwd(), 'models', 'Kokoro-82M'))
+                        if force_online:
+                            logger.info("Container environment detected, forcing online mode for first run")
+                    
+                    logger.info("Loading models in background thread")
+                    # Force a complete model initialization synchronously within the thread
+                    initialize_models(force_online=force_online)
+                    
+                    # Verify models are properly loaded by checking outputs of core functions
+                    from entry.core.models import get_models, get_pipelines, get_voices
+                    models = get_models()
+                    pipelines = get_pipelines()
+                    voices = get_voices()
+                    
+                    # Validate critical components are loaded
+                    if not models or not pipelines or not voices:
+                        raise RuntimeError(f"Critical components missing after initialization: models={bool(models)}, pipelines={bool(pipelines)}, voices={bool(voices)}")
+                        
+                    logger.info(f"Models loaded successfully: {len(models)} models, {len(pipelines)} pipelines, {len(voices)} voices")
+                    MODELS_LOADED = True
+                    initialized = True  # Set initialized flag when models are loaded
+                    initialization_error = None  # Clear any previous errors
             except Exception as e:
                 logger.error(f"Error loading models: {e}")
+                import traceback
+                logger.error(f"Initialization error traceback: {traceback.format_exc()}")
                 initialization_error = str(e)  # Set error message
                 MODELS_LOADED = False
                 initialized = False
@@ -107,6 +124,7 @@ def create_app() -> FastAPI:
     app.include_router(jobs.router, prefix="/jobs", tags=["Jobs"])
     app.include_router(voices.router, prefix="/voices", tags=["Voices"])
     app.include_router(streams.router, prefix="/streams", tags=["Streams"])
+    app.include_router(debug.router, prefix="/debug", tags=["Debug"])
 
     @app.get("/")
     async def root():
@@ -118,27 +136,43 @@ def create_app() -> FastAPI:
         # Allow health checks and readiness checks to pass through
         if request.url.path in ["/health", "/ready", "/docs", "/openapi.json", "/redoc"]:
             return await call_next(request)
-            
-        if not initialized:
-            if initialization_error:
-                # Format and truncate error message to prevent cutoff
-                error_msg = str(initialization_error)
-                if "weights_only" in error_msg:
-                    # Special handling for PyTorch 2.6 weights_only errors
-                    error_msg = "PyTorch 2.6 compatibility issue with model loading. The model was created with an older PyTorch version. Please restart the application to retry with fallback loading options."
-                
-                # Truncate if too long
-                if len(error_msg) > 200:
-                    error_msg = error_msg[:197] + "..."
+        
+        # Acquire lock to safely check initialization state
+        with model_init_lock:
+            if not initialized:
+                if initialization_error:
+                    # Format and truncate error message to prevent cutoff
+                    error_msg = str(initialization_error)
+                    if "weights_only" in error_msg:
+                        # Special handling for PyTorch 2.6 weights_only errors
+                        error_msg = "PyTorch 2.6 compatibility issue with model loading. The model was created with an older PyTorch version. Please restart the application to retry with fallback loading options."
                     
+                    # Truncate if too long
+                    if len(error_msg) > 200:
+                        error_msg = error_msg[:197] + "..."
+                        
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"Service unavailable: {error_msg}"
+                    )
                 raise HTTPException(
                     status_code=503,
-                    detail=f"Service unavailable: {error_msg}"
+                    detail="Service is still initializing"
                 )
-            raise HTTPException(
-                status_code=503,
-                detail="Service is still initializing"
-            )
+            
+            # Double-check that models are actually available
+            from entry.core.models import get_models, get_pipelines, get_voices
+            models = get_models()
+            pipelines = get_pipelines()
+            voices = get_voices()
+            
+            if not models or False in models or None in models.values() or not pipelines or not voices:
+                logger.error(f"Critical model components missing at request time: models={bool(models)}, pipelines={bool(pipelines)}, voices={bool(voices)}")
+                raise HTTPException(
+                    status_code=503, 
+                    detail="Model initialization incomplete - service not ready"
+                )
+                
         return await call_next(request)
 
     return app

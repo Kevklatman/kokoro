@@ -198,7 +198,7 @@ class KPipeline:
                         f = path
                         break
                         
-            # If still not found, download from Hugging Face
+            # Ifyy still not found, download from Hugging Face
             if f is None:
                 logger.info(f"Voice not found locally, downloading from Hugging Face: {voice}")
                 try:

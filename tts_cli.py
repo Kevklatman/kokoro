@@ -189,16 +189,24 @@ def get_available_voices(host: str, use_ssl: bool = False, auth_token: Optional[
         auth_token=auth_token
     )
     
+    # Always ensure af_sky and af_heart are first in the list
+    default_voices = ["af_sky", "af_heart"]
+    voices = []
     if status == 200 and data:
         # Handle different response formats
         if isinstance(data, list):
-            return data
+            voices = data
         elif isinstance(data, dict) and "voices" in data:
-            return data["voices"]
-    
-    print_colored("Could not retrieve voices from API, using default set", "yellow")
-    # Include af_sky and af_heart in the default fallback voices
-    return ["en_US_1", "en_US_2", "en_GB_1", "af_sky", "af_heart"]  # Default fallback
+            voices = data["voices"]
+    else:
+        print_colored("Could not retrieve voices from API, using default set", "yellow")
+        voices = ["en_US_1", "en_US_2", "en_GB_1"]
+    # Prepend af_sky and af_heart if not present
+    for v in reversed(default_voices):
+        if v in voices:
+            voices.remove(v)
+        voices.insert(0, v)
+    return voices
 
 def generate_audio(
     host: str, 
@@ -503,10 +511,12 @@ def main() -> None:
         # Direct mode
         # Save to audio_tests by default
         output_path = args.output or os.path.join("audio_tests", f"output_{int(time.time())}.{args.format}")
+        # Use the --voice argument if provided, otherwise default to af_sky
+        voice = args.voice if args.voice is not None else "af_sky"
         generate_audio(
             host=host,
             text=args.text,
-            voice=args.voice,
+            voice=voice,
             quality=args.quality,
             format=args.format,
             save_path=output_path,

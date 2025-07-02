@@ -41,7 +41,7 @@ def select_voice_and_preset(
         if fiction:
             # Fiction: af_sky preset (override everything)
             return 'af_sky', {
-                'speed': 1.1,
+                'speed': 1.0,
                 'breathiness': 0,
                 'tenseness': 0,
                 'jitter': 0,

@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y \
 # Copy requirements and install dependencies
 COPY requirements.txt /app/
 RUN pip3 install --upgrade pip \
+    && pip3 install torch==2.5.1+cu124 torchaudio==2.5.1+cu124 --index-url https://download.pytorch.org/whl/cu124 \
     && pip3 install -r requirements.txt
 
 # Create necessary directories

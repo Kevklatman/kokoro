@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional
 
 from entry.core.tts import preprocess_text, generate_audio, select_voice_and_preset
 from entry.config import get_settings
+import torch
 
 router = APIRouter(
     prefix="/debug",
@@ -115,3 +116,27 @@ async def debug_tts_pipeline(request: DebugTTSRequest) -> DebugResponse:
     except Exception as e:
         logger.exception("Debug endpoint failed")
         raise HTTPException(status_code=500, detail=f"Debug failed: {str(e)}")
+
+@router.get("/gpu-info")
+async def get_gpu_info() -> Dict[str, Any]:
+    """Get GPU and device information"""
+    try:
+        settings = get_settings()
+        info = {
+            "torch_version": torch.__version__,
+            "cuda_available": torch.cuda.is_available(),
+            "cuda_device_count": torch.cuda.device_count() if torch.cuda.is_available() else 0,
+            "settings_cuda_available": settings.cuda_available,
+            "current_device": str(torch.cuda.current_device()) if torch.cuda.is_available() else "N/A",
+        }
+        
+        if torch.cuda.is_available():
+            info["gpu_name"] = torch.cuda.get_device_name(0)
+            info["gpu_memory_total"] = torch.cuda.get_device_properties(0).total_memory
+            info["gpu_memory_allocated"] = torch.cuda.memory_allocated(0)
+            info["gpu_memory_cached"] = torch.cuda.memory_reserved(0)
+        
+        return info
+    except Exception as e:
+        logger.exception("Failed to get GPU info")
+        raise HTTPException(status_code=500, detail=f"GPU info failed: {str(e)}")

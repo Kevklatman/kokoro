@@ -158,15 +158,19 @@ jobs:
           # Deploy with proper environment configuration for offline mode
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --image=${{ env.AR_HOSTNAME }}/${{ env.PROJECT_ID }}/${{ env.AR_REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
-            --cpu=2 \
-            --memory=4Gi \
-            --timeout=300s \
+            --cpu=8 \
+            --memory=32Gi \
+            --timeout=3600s \
+            --concurrency=10 \
+            --execution-environment=gen2 \
             --no-cpu-throttling \
             --startup-cpu-boost \
             --port=8080 \
-            --min-instances=0 \
-            --max-instances=10 \
-            --set-env-vars=OFFLINE_MODE=true,PYTHONPATH=/app \
+            --min-instances=1 \
+            --max-instances=3 \
+            --gpu-type=nvidia-l4 \
+            --gpu-count=1 \
+            --set-env-vars=OFFLINE_MODE=true,PYTHONPATH=/app,WORKERS=8 \
             --health-check-path=/health \
             --readiness-check-path=/ready \
             --region=${{ env.GCP_REGION }} \

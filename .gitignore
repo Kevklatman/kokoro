@@ -39,7 +39,7 @@ audio_tests/
 *.manifest
 *.spec
 
-.env.dev
+audio_tests/
 
 # Installer logs
 pip-log.txt
@@ -231,3 +231,9 @@ output_1750909833.mp3
 # Ignore CLI files
 tts_cli.py
 generate_audio.py
+
+
+kokoro_front_and_back.code-workspace
+
+.env.develop
+

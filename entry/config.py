@@ -32,7 +32,13 @@ def is_container_environment() -> bool:
 def get_models_directory() -> str:
     """Get models directory path with fallback logic"""
     models_dir = os.getenv('MODELS_DIR', 'models')
-    return get_env_path('MODELS_DIR', models_dir)
+    path = get_env_path('MODELS_DIR', models_dir)
+    
+    # Ensure we always return an absolute path
+    if not os.path.isabs(path):
+        path = os.path.abspath(path)
+    
+    return path
 
 
 class Settings:

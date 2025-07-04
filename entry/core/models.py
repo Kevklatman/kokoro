@@ -154,7 +154,9 @@ def load_voice_safely(voice_path, pipeline):
 
 def load_voice_packs(models_dir: str) -> set:
     """Load voice packs from models directory"""
+    logger.info(f"Loading voice packs from models_dir: {repr(models_dir)}")
     voice_dir = build_path(models_dir, 'voices')
+    logger.info(f"Constructed voice_dir: {repr(voice_dir)}")
     
     if not safe_directory_exists(voice_dir):
         logger.error(f"Voice directory not found: {voice_dir}")

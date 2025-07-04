@@ -120,8 +120,45 @@ async def batch_text_to_speech(request: Request):
         request_data = await request.json()
         logger.info(f"Received batch request data: {request_data}")
         
-        # Extract required fields with defaults
-        texts = request_data.get("texts", [])
+        # Handle both single text (auto-chunked) and multiple texts
+        single_text = request_data.get("text")  # Single long text for auto-chunking
+        texts = request_data.get("texts", [])  # Array of texts (current behavior)
+        
+        # Auto-chunk single text using KPipeline if provided
+        if single_text and not texts:
+            logger.info(f"Auto-chunking single text of length {len(single_text)} characters")
+            try:
+                # Import KPipeline here to use its chunking logic
+                from kokoro import KPipeline
+                
+                # Determine language based on voice
+                lang_code = 'a'  # Default to American English
+                if 'uk' in voice.lower() or 'british' in voice.lower():
+                    lang_code = 'b'
+                
+                # Create pipeline for chunking (without model to just get chunks)
+                pipeline = KPipeline(lang_code=lang_code, model=False)
+                
+                # Use pipeline's chunking to split the text
+                texts = []
+                chunk_results = list(pipeline(single_text, voice=None, speed=1.0))
+                texts = [result.graphemes for result in chunk_results if result.graphemes.strip()]
+                
+                logger.info(f"Auto-chunked into {len(texts)} segments")
+                for i, chunk in enumerate(texts[:3]):  # Log first 3 chunks
+                    logger.info(f"Chunk {i}: '{chunk[:50]}{'...' if len(chunk) > 50 else ''}'")
+                    
+            except Exception as e:
+                logger.error(f"Error auto-chunking text: {str(e)}")
+                # Fallback: simple sentence splitting
+                import re
+                texts = [s.strip() for s in re.split(r'[.!?]+', single_text) if s.strip()]
+                logger.info(f"Fallback chunking into {len(texts)} sentences")
+        
+        if not texts:
+            raise HTTPException(status_code=400, detail="Either 'text' (single) or 'texts' (array) must be provided")
+        
+        # Extract other parameters with defaults
         voice = request_data.get("voice", "af_sky")
         speed = request_data.get("speed", 1.0)
         breathiness = request_data.get("breathiness", 0.0)
@@ -310,28 +347,51 @@ async def batch_text_to_speech(request: Request):
                 
                 # Ensure we have a proper tuple with sample_rate and audio_data
                 if not isinstance(result, tuple) or len(result) != 2:
-                    logger.warning(f"Result {i} is not a proper tuple: {type(result)}, adding empty string")
+                    logger.warning(f"Result {i} is not a proper tuple: {type(result)}, content: {result}")
                     audio_base64_list.append("")
                     continue
-                    
-                sample_rate, audio_data = result
                 
-                # Validate sample_rate and audio_data
-                if not isinstance(sample_rate, int) or sample_rate <= 0:
-                    logger.warning(f"Invalid sample rate {sample_rate} for result {i}, using default 24000")
-                    sample_rate = 24000
+                # Debug: log the result structure before unpacking
+                logger.info(f"Result {i} structure: type={type(result)}, length={len(result)}, content types: {[type(x) for x in result]}")
                 
+                try:
+                    sample_rate, audio_data = result
+                    logger.info(f"Unpacked result {i}: sample_rate={sample_rate} (type: {type(sample_rate)}), audio_data shape: {audio_data.shape if hasattr(audio_data, 'shape') else 'no shape attr'} (type: {type(audio_data)})")
+                except ValueError as e:
+                    logger.error(f"Failed to unpack result {i}: {e}, result: {result}")
+                    audio_base64_list.append("")
+                    continue
+                
+                # Validate sample_rate - handle case where it might be a tuple itself
+                if isinstance(sample_rate, tuple):
+                    logger.warning(f"Sample rate is a tuple: {sample_rate}, extracting first element")
+                    if len(sample_rate) > 0 and isinstance(sample_rate[0], int):
+                        actual_sample_rate = sample_rate[0]
+                        # The audio_data might be in sample_rate[1]
+                        if len(sample_rate) > 1:
+                            audio_data = sample_rate[1]
+                    else:
+                        logger.error(f"Cannot extract valid sample rate from tuple: {sample_rate}")
+                        audio_base64_list.append("")
+                        continue
+                elif isinstance(sample_rate, int) and sample_rate > 0:
+                    actual_sample_rate = sample_rate
+                else:
+                    logger.warning(f"Invalid sample rate {sample_rate} (type: {type(sample_rate)}) for result {i}, using default 24000")
+                    actual_sample_rate = 24000
+                
+                # Validate audio_data
                 if not isinstance(audio_data, np.ndarray):
-                    logger.warning(f"Audio data for result {i} is not a numpy array: {type(audio_data)}, adding empty string")
+                    logger.warning(f"Audio data for result {i} is not a numpy array: {type(audio_data)}, content: {audio_data}")
                     audio_base64_list.append("")
                     continue
                 
-                logger.info(f"Encoding audio {i} with sample rate {sample_rate}, shape {audio_data.shape}")
+                logger.info(f"Encoding audio {i} with sample rate {actual_sample_rate}, shape {audio_data.shape}")
                 # Convert audio data to specified format
                 if format_type == "mp3":
-                    encoded_audio = audio_to_base64(audio_data, sample_rate, quality=quality, format='mp3')
+                    encoded_audio = audio_to_base64(audio_data, actual_sample_rate, quality=quality, format='mp3')
                 else:  # Default to WAV
-                    encoded_audio = audio_to_base64(audio_data, sample_rate, quality=quality, format='wav')
+                    encoded_audio = audio_to_base64(audio_data, actual_sample_rate, quality=quality, format='wav')
                 
                 logger.info(f"Successfully encoded audio {i}, length: {len(encoded_audio)}")
                 audio_base64_list.append(encoded_audio)

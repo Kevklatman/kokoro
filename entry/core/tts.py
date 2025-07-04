@@ -204,13 +204,29 @@ def generate_audio_batch(
     pack = pipeline.load_voice(voice)
     use_gpu = use_gpu and torch.cuda.is_available() and settings.cuda_available
 
-    # Tokenize all texts in batch
+    # Deduplication optimization: cache identical texts
+    unique_texts = {}
+    text_to_index = {}
+    
+    for i, text in enumerate(texts):
+        if text not in unique_texts:
+            unique_texts[text] = []
+            # Process unique text once
+            for _, ps, _ in pipeline(text, voice, speed):
+                unique_texts[text].append((ps, pack[len(ps)-1]))
+        text_to_index[i] = text
+    
+    # Build batch from deduplicated results
     batch_ps = []
     batch_ref_s = []
-    for text in texts:
-        for _, ps, _ in pipeline(text, voice, speed):
+    result_mapping = []  # Track which result corresponds to which original text
+    
+    for i, text in enumerate(texts):
+        cached_results = unique_texts[text]
+        for ps, ref_s in cached_results:
             batch_ps.append(ps)
-            batch_ref_s.append(pack[len(ps)-1])
+            batch_ref_s.append(ref_s)
+            result_mapping.append(i)  # Track original text index
     
     if not batch_ps:
         return []

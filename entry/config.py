@@ -5,6 +5,7 @@ import os
 from functools import lru_cache
 from typing import List
 import dotenv
+from entry.utils.string_utils import parse_comma_separated_string, build_path
 
 # Load environment variables from .env file if it exists
 dotenv.load_dotenv()
@@ -18,8 +19,8 @@ def get_env_path(base_path: str, sub_path: str = "") -> str:
     """Get environment-based path with fallback to current directory"""
     env_path = os.getenv(base_path)
     if env_path:
-        return os.path.join(env_path, sub_path) if sub_path else env_path
-    return os.path.join(os.getcwd(), sub_path) if sub_path else os.getcwd()
+        return build_path(env_path, sub_path) if sub_path else env_path
+    return build_path(os.getcwd(), sub_path) if sub_path else os.getcwd()
 
 
 def is_container_environment() -> bool:
@@ -46,15 +47,11 @@ class Settings:
         
         # CORS
         origins_str = os.getenv("ALLOWED_ORIGINS", "*")
-        if origins_str.strip() == "*":
-            self.allowed_origins = ["*"]
-        else:
-            origins = [origin.strip() for origin in origins_str.split(",") if origin.strip()]
-            self.allowed_origins = origins if origins else ["*"]
+        self.allowed_origins = parse_comma_separated_string(origins_str)
         
         # Models
         self.models_dir = get_models_directory()
-        self.models_dir_path = os.path.join(os.getcwd(), self.models_dir)
+        self.models_dir_path = build_path(os.getcwd(), self.models_dir)
         self.cuda_available = parse_bool_env("CUDA_AVAILABLE", "True")
         
         # Hugging Face

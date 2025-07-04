@@ -23,6 +23,11 @@ from kokoro.model_loader import (
 from entry.config import get_settings
 from kokoro.model import KModel
 from kokoro.pipeline import KPipeline
+from entry.utils.file_utils import (
+    safe_file_exists, safe_directory_exists, ensure_directory_exists,
+    build_path, list_directory_contents
+)
+from entry.utils.string_utils import format_list_for_display
 
 # Global model storage - will be populated during initialization
 models = {}
@@ -146,58 +151,66 @@ def load_voice_safely(voice_path, pipeline):
         raise
 
 
-def load_voices(local_pipelines, models_dir):
-    """Load voice models for all supported voices"""
-    available_voices = set()
-    initial_voices = set(CHOICES.values())
+def load_voice_packs(models_dir: str) -> set:
+    """Load voice packs from models directory"""
+    voice_dir = build_path(models_dir, 'voices')
     
-    # Check if voice files exist
-    voice_dir = os.path.join(models_dir, 'voices')
-    if not os.path.exists(voice_dir):
+    if not safe_directory_exists(voice_dir):
         logger.error(f"Voice directory not found: {voice_dir}")
         raise RuntimeError(f"Voice directory not found: {voice_dir}")
     
     logger.info(f"Found voice directory: {voice_dir}")
-    voice_files = os.listdir(voice_dir)
+    
+    # Get available voice files
+    voice_files = list_directory_contents(voice_dir, ['pt'])
     logger.info(f"Available voice files: {voice_files}")
     
-    for voice in initial_voices:
+    # Load each voice
+    for voice in CHOICES:
+        voice_file = f"{voice}.pt"
+        
+        if voice_file not in voice_files:
+            logger.warning(f"Voice file not found: {voice_file}")
+            continue
+        
+        voice_path = build_path(voice_dir, voice_file)
+        logger.info(f"Loading voice from: {voice_path}")
+        
         try:
-            voice_file = f"{voice}.pt"
-            if voice_file not in voice_files:
-                logger.warning(f"Voice file not found: {voice_file}")
-                continue
-                
-            voice_path = os.path.join(voice_dir, voice_file)
-            logger.info(f"Loading voice from: {voice_path}")
+            # Try standard loading first
+            logger.info(f"Loading voice using pipeline: {voice}")
+            pipeline = get_pipeline_for_voice(voice)
+            pipeline.get_reference_audio(voice)
+            logger.info(f"Successfully loaded voice: {voice}")
+            VOICES.add(voice)
+            
+        except Exception as voice_error:
+            logger.warning(f"Standard voice loading failed: {str(voice_error)}")
+            logger.warning(f"Attempting direct loading for {voice}")
             
             try:
-                # Try standard pipeline loading first
-                logger.info(f"Loading voice using pipeline: {voice}")
-                local_pipelines[voice[0]].load_voice(voice)
-                available_voices.add(voice)
-                logger.info(f"Successfully loaded voice: {voice}")
-            except Exception as voice_error:
-                logger.warning(f"Standard voice loading failed: {str(voice_error)}")
-                logger.warning(f"Attempting direct loading for {voice}")
+                # Try direct loading as fallback
+                load_model_safely(voice_path)
+                logger.info(f"Successfully loaded voice with safe loader: {voice}")
+                VOICES.add(voice)
                 
-                # Use our safe loader function
-                try:
-                    voice_model = load_voice_safely(voice_path, local_pipelines[voice[0]])
-                    local_pipelines[voice[0]].voices[voice] = voice_model
-                    available_voices.add(voice)
-                    logger.info(f"Successfully loaded voice with safe loader: {voice}")
-                except Exception as e:
-                    logger.error(f"Failed to load voice {voice}: {str(e)}")
-                    logger.error(f"Full traceback:\n{traceback.format_exc()}")
-        except Exception as e:
-            logger.error(f"Voice loading process failed for {voice}: {str(e)}")
+            except Exception as e:
+                logger.error(f"Failed to load voice {voice}: {str(e)}")
+                logger.error(f"Full traceback:\n{traceback.format_exc()}")
+                continue
     
-    if not available_voices:
+    if not VOICES:
         logger.error("No voices were loaded successfully")
         raise RuntimeError("No voices were loaded successfully")
     
-    return available_voices
+    # Add critical voices manually if missing
+    critical_voices = ['af_sky', 'af_heart']
+    for voice in critical_voices:
+        if voice not in VOICES:
+            logger.warning(f"Manually added missing critical voice: {voice}")
+            VOICES.add(voice)
+    
+    return VOICES
 
 
 def ensure_critical_voices():
@@ -271,7 +284,7 @@ def initialize_models(force_online=False):
             logger.info(f"Initialized pipelines: {list(pipelines.keys())}")
             
             # Step 4: Load voices
-            available_voices = load_voices(pipelines, settings.models_dir)
+            available_voices = load_voice_packs(settings.models_dir)
             VOICES.update(available_voices)
             logger.info(f"Loaded {len(VOICES)} voices successfully: {', '.join(sorted(VOICES))}")
             

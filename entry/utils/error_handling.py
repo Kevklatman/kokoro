@@ -5,6 +5,7 @@ from typing import Optional, Callable, Any
 from fastapi import HTTPException
 from loguru import logger
 import traceback
+from entry.utils.string_utils import format_operation_details
 
 
 def safe_execute(
@@ -83,19 +84,19 @@ def create_server_error(message: str, context: str = "Server operation") -> HTTP
 
 def log_operation_start(operation: str, **kwargs):
     """Log the start of an operation with consistent formatting."""
-    details = ", ".join([f"{k}={v}" for k, v in kwargs.items()])
+    details = format_operation_details(**kwargs)
     logger.info(f"🔄 Starting {operation}: {details}" if details else f"🔄 Starting {operation}")
 
 
 def log_operation_success(operation: str, **kwargs):
     """Log the successful completion of an operation."""
-    details = ", ".join([f"{k}={v}" for k, v in kwargs.items()])
+    details = format_operation_details(**kwargs)
     logger.info(f"✅ Completed {operation}: {details}" if details else f"✅ Completed {operation}")
 
 
 def log_operation_failure(operation: str, error: Exception, **kwargs):
     """Log the failure of an operation."""
-    details = ", ".join([f"{k}={v}" for k, v in kwargs.items()])
+    details = format_operation_details(**kwargs)
     logger.error(f"❌ Failed {operation}: {str(error)}")
     if details:
         logger.error(f"❌ Operation details: {details}")

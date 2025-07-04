@@ -8,6 +8,7 @@ import numpy as np
 from typing import Tuple, Optional, Literal, Union
 import logging
 from pydub import AudioSegment
+from entry.utils.string_utils import format_size_info, normalize_string_case
 
 logger = logging.getLogger(__name__)
 
@@ -209,13 +210,13 @@ def encode_audio_base64(audio_bytes: bytes) -> str:
 def format_audio_size(audio_bytes: bytes, format_name: str = "audio") -> str:
     """Format audio size in KB with format name"""
     size_kb = len(audio_bytes) / 1024
-    return f"{format_name.upper()} size: {size_kb:.1f}KB"
+    return format_size_info(format_name, size_kb)
 
 
 def format_quality_info(format_name: str, quality: str, audio_bytes: bytes) -> str:
     """Format quality information for logging"""
     size_kb = len(audio_bytes) / 1024
-    return f"{format_name.upper()} response size ({quality}): {size_kb:.1f}KB"
+    return format_size_info(format_name, size_kb, quality)
 
 
 def normalize_audio_data(audio_data: np.ndarray, target_sample_rate: int = 24000) -> np.ndarray:
@@ -244,7 +245,7 @@ def normalize_audio_data(audio_data: np.ndarray, target_sample_rate: int = 24000
 def validate_audio_format(format_name: str) -> str:
     """Validate and normalize audio format name"""
     valid_formats = ['wav', 'mp3', 'flac', 'ogg']
-    format_lower = format_name.lower()
+    format_lower = normalize_string_case(format_name, "lower")
     
     if format_lower not in valid_formats:
         raise ValueError(f"Unsupported audio format: {format_name}. Supported: {valid_formats}")
@@ -255,7 +256,7 @@ def validate_audio_format(format_name: str) -> str:
 def validate_audio_quality(quality: str) -> str:
     """Validate and normalize audio quality setting"""
     valid_qualities = ['low', 'medium', 'high']
-    quality_lower = quality.lower()
+    quality_lower = normalize_string_case(quality, "lower")
     
     if quality_lower not in valid_qualities:
         raise ValueError(f"Unsupported audio quality: {quality}. Supported: {valid_qualities}")
@@ -422,7 +423,9 @@ def create_fallback_response(audio_data: np.ndarray) -> dict:
 
 def audio_to_base64(audio_data: np.ndarray, format: str = 'wav', quality: str = 'high') -> str:
     """Convert audio data to base64 string"""
-    if format.lower() == 'mp3':
+    format_lower = normalize_string_case(format, "lower")
+    
+    if format_lower == 'mp3':
         audio_bytes = encode_mp3(audio_data, '192k' if quality == 'high' else '128k' if quality == 'medium' else '64k')
     else:
         audio_bytes = encode_wav(audio_data, 24000 if quality == 'high' else 22050 if quality == 'medium' else 16000)
@@ -439,7 +442,9 @@ def optimize_audio_response(audio_data: np.ndarray, format: str, quality: str, m
     # Try different quality levels
     for test_quality in ['high', 'medium', 'low']:
         try:
-            if format.lower() == 'mp3':
+            format_lower = normalize_string_case(format, "lower")
+            
+            if format_lower == 'mp3':
                 bitrate = '192k' if test_quality == 'high' else '128k' if test_quality == 'medium' else '64k'
                 audio_bytes = encode_mp3(audio_data, bitrate)
             else:

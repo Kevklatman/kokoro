@@ -238,9 +238,24 @@ def initialize_models(force_online=False):
             pipelines.clear()
             VOICES.clear()
             
-            # Add models (ensure CPU model exists)
+            # Add models (ensure both CPU and GPU models exist)
             models['standard'] = model
             models[False] = model  # CPU model
+            
+            # Initialize GPU model if CUDA is available
+            if torch.cuda.is_available() and settings.cuda_available:
+                try:
+                    # Create GPU model by moving to CUDA
+                    gpu_model = KModel(repo_id='hexgrad/Kokoro-82M', models_dir=settings.models_dir)
+                    gpu_model.model.cuda()  # Move model to GPU
+                    models[True] = gpu_model  # GPU model
+                    logger.info("GPU model initialized successfully")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize GPU model: {e}. Using CPU model as fallback.")
+                    models[True] = model  # Use CPU model as fallback
+            else:
+                logger.info("CUDA not available or disabled. Using CPU model for GPU requests.")
+                models[True] = model  # Use CPU model as fallback
             
             # Step 3: Initialize pipelines
             local_pipelines = setup_pipelines(model, settings.models_dir)

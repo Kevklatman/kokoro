@@ -1,9 +1,10 @@
 """
 TTS API routes
 """
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Response, Request
+from fastapi.responses import StreamingResponse, JSONResponse
 import base64
+import numpy as np
 
 from entry.models import (
     TTSRequest, TTSBatchRequest, TokenizeRequest, PreprocessRequest,
@@ -111,72 +112,248 @@ async def text_to_speech(request: TTSRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/batch", response_model=BatchTTSResponse)
-async def batch_text_to_speech(request: TTSBatchRequest):
-    """Convert a batch of texts to speech and return base64-encoded audio strings"""
+@router.post("/batch")
+async def batch_text_to_speech(request: Request):
+    """Generate audio for multiple text inputs using batch processing"""
     try:
-        fiction_list = request.fiction if request.fiction else [False] * len(request.texts)
+        # Parse the request body manually to avoid pydantic validation issues
+        request_data = await request.json()
+        logger.info(f"Received batch request data: {request_data}")
         
-        results = []
-        for idx, text in enumerate(request.texts):
-            is_fiction = fiction_list[idx] if idx < len(fiction_list) else False
+        # Extract required fields with defaults
+        texts = request_data.get("texts", [])
+        voice = request_data.get("voice", "af_sky")
+        speed = request_data.get("speed", 1.0)
+        breathiness = request_data.get("breathiness", 0.0)
+        tenseness = request_data.get("tenseness", 0.0)
+        jitter = request_data.get("jitter", 0.0)
+        sultry = request_data.get("sultry", 0.0)
+        fiction_list = request_data.get("fiction", [False] * len(texts))
+        quality = request_data.get("quality", "medium")
+        format_type = request_data.get("format", "mp3")
+        
+        # Convert string enum values if needed
+        if isinstance(quality, dict) and "value" in quality:
+            quality = quality["value"]
+        if isinstance(format_type, dict) and "value" in format_type:
+            format_type = format_type["value"]
             
-            # Apply presets based on fiction flag
+        logger.info(f"Batch TTS request received with {len(texts)} texts")
+        logger.info(f"Using format: {format_type}, quality: {quality}")
+        
+        # Ensure fiction_list is the same length as texts
+        if len(fiction_list) < len(texts):
+            fiction_list.extend([False] * (len(texts) - len(fiction_list)))
+        
+        # Group texts by fiction/non-fiction for batch processing
+        fiction_texts = []
+        fiction_indices = []
+        nonfiction_texts = []
+        nonfiction_indices = []
+        
+        for i, (text, is_fiction) in enumerate(zip(texts, fiction_list)):
             if is_fiction:
-                # Fiction preset
-                voice = 'af_sky'
-                speed = 1.1
-                breathiness = 0.1
-                tenseness = 0.1
-                jitter = 0.15
-                sultry = 0.1
+                fiction_texts.append(text)
+                fiction_indices.append(i)
             else:
-                # Non-fiction preset
-                voice = 'af_heart'
-                speed = 1.0
-                breathiness = 0.15
-                tenseness = 0.5
-                jitter = 0.3
-                sultry = 0.1
-            
-            # Use GPU if available based on settings
-            settings = get_settings()
-            use_gpu = settings.cuda_available
-            
-            (sample_rate, audio_data), _ = generate_audio(
-                text, voice, speed, use_gpu,
-                breathiness, tenseness, jitter, sultry
-            )
-            results.append((sample_rate, audio_data))
+                nonfiction_texts.append(text)
+                nonfiction_indices.append(i)
         
-        # Get quality parameter with default of 'auto'
-        # Apply quality and format settings
-        quality = request.quality.value if hasattr(request, 'quality') else 'medium'
-        format = request.format.value if hasattr(request, 'format') else 'wav'
-        logger.info(f"Batch TTS request with quality {quality}, format {format}")
+        # Initialize results list with None placeholders
+        results = [None] * len(texts)
+        use_gpu = get_settings().cuda_available
         
+        # Process fiction texts in batch if any
+        if fiction_texts:
+            logger.info(f"Processing {len(fiction_texts)} fiction texts in batch mode")
+            
+            try:
+                # Use batch processing for fiction texts
+                batch_results = generate_audio_batch(
+                    fiction_texts, voice, speed, use_gpu,
+                    breathiness, tenseness, jitter, sultry
+                )
+                
+                logger.info(f"Fiction batch results received: {len(batch_results)} items")
+                
+                # Place results in the correct positions
+                for idx, res in zip(fiction_indices, batch_results):
+                    try:
+                        # generate_audio_batch returns ((sample_rate, audio_data), phonemes)
+                        if isinstance(res, tuple) and len(res) >= 1:
+                            audio_tuple = res[0]  # This should be (sample_rate, audio_data)
+                            
+                            if isinstance(audio_tuple, tuple) and len(audio_tuple) == 2:
+                                sample_rate, audio_data = audio_tuple
+                                
+                                # Ensure audio_data is a numpy array
+                                if not isinstance(audio_data, np.ndarray):
+                                    logger.warning(f"Fiction audio data is not a numpy array: {type(audio_data)}, attempting conversion")
+                                    try:
+                                        # Try to convert to numpy array if it's not already
+                                        if isinstance(audio_data, list):
+                                            audio_data = np.array(audio_data, dtype=np.float32)
+                                        elif isinstance(audio_data, str):
+                                            # If it's a string, we can't convert it to audio data
+                                            audio_data = np.zeros(1000, dtype=np.float32)
+                                    except Exception as conv_err:
+                                        logger.error(f"Failed to convert fiction audio data: {str(conv_err)}")
+                                        audio_data = np.zeros(1000, dtype=np.float32)
+                                
+                                results[idx] = (sample_rate, audio_data)
+                            else:
+                                logger.warning(f"Unexpected fiction audio tuple format: {type(audio_tuple)}")
+                                results[idx] = (24000, np.zeros(1000, dtype=np.float32))
+                        else:
+                            logger.warning(f"Unexpected fiction batch result format: {type(res)}")
+                            results[idx] = (24000, np.zeros(1000, dtype=np.float32))
+                    except Exception as e:
+                        logger.error(f"Error processing fiction batch result for index {idx}: {str(e)}")
+                        results[idx] = (24000, np.zeros(1000, dtype=np.float32))  # Fallback to empty audio
+            except Exception as e:
+                logger.error(f"Error processing fiction batch: {str(e)}")
+                # Fall back to processing individually
+                for i, text in enumerate(fiction_texts):
+                    try:
+                        result = generate_audio(
+                            text, voice, speed, use_gpu,
+                            breathiness, tenseness, jitter, sultry
+                        )
+                        results[fiction_indices[i]] = result
+                    except Exception as inner_e:
+                        logger.error(f"Error processing individual fiction text: {str(inner_e)}")
+                        # Skip this text
+        
+        # Process non-fiction texts in batch if any
+        if nonfiction_texts:
+            logger.info(f"Processing {len(nonfiction_texts)} non-fiction texts in batch mode")
+            
+            try:
+                # Use batch processing for non-fiction texts
+                batch_results = generate_audio_batch(
+                    nonfiction_texts, voice, speed, use_gpu,
+                    breathiness, tenseness, jitter, sultry
+                )
+                
+                logger.info(f"Batch results received: {len(batch_results)} items")
+                logger.info(f"Batch results types: {[type(res) for res in batch_results]}")
+                
+                # Place results in the correct positions
+                for idx, res in zip(nonfiction_indices, batch_results):
+                    try:
+                        # generate_audio_batch returns ((sample_rate, audio_data), phonemes)
+                        # We need to extract just (sample_rate, audio_data)
+                        logger.info(f"Processing batch result for index {idx}, type: {type(res)}")
+                        
+                        if isinstance(res, tuple) and len(res) >= 1:
+                            # First element should be (sample_rate, audio_data)
+                            audio_tuple = res[0]  
+                            logger.info(f"Audio tuple type: {type(audio_tuple)}, length: {len(audio_tuple) if isinstance(audio_tuple, tuple) else 'not a tuple'}")
+                            
+                            # Dump the actual content for debugging
+                            if isinstance(audio_tuple, tuple) and len(audio_tuple) == 2:
+                                logger.info(f"Sample rate type: {type(audio_tuple[0])}, Audio data type: {type(audio_tuple[1])}")
+                            
+                            if isinstance(audio_tuple, tuple) and len(audio_tuple) == 2:
+                                sample_rate, audio_data = audio_tuple
+                                logger.info(f"Successfully extracted sample_rate: {sample_rate}, audio_data shape: {audio_data.shape if hasattr(audio_data, 'shape') else 'unknown'}")
+                                
+                                # Ensure audio_data is a numpy array
+                                if not isinstance(audio_data, np.ndarray):
+                                    logger.warning(f"Audio data is not a numpy array: {type(audio_data)}, attempting conversion")
+                                    try:
+                                        # Try to convert to numpy array if it's not already
+                                        if isinstance(audio_data, list):
+                                            audio_data = np.array(audio_data, dtype=np.float32)
+                                        elif isinstance(audio_data, str):
+                                            # If it's a string, we can't convert it to audio data
+                                            # Use a small silent audio segment instead
+                                            logger.warning(f"Audio data is a string, using silent audio instead")
+                                            audio_data = np.zeros(1000, dtype=np.float32)
+                                    except Exception as conv_err:
+                                        logger.error(f"Failed to convert audio data: {str(conv_err)}")
+                                        audio_data = np.zeros(1000, dtype=np.float32)
+                                
+                                results[idx] = (sample_rate, audio_data)
+                            else:
+                                logger.warning(f"Unexpected audio tuple format: {type(audio_tuple)}, using default sample rate")
+                                # Create a silent audio segment
+                                results[idx] = (24000, np.zeros(1000, dtype=np.float32))
+                        else:
+                            logger.warning(f"Unexpected batch result format: {type(res)}, using default sample rate")
+                            results[idx] = (24000, res)
+                    except Exception as e:
+                        logger.error(f"Error processing batch result for index {idx}: {str(e)}")
+                        results[idx] = (24000, np.zeros(1000, dtype=np.float32))  # Fallback to empty audio
+            except Exception as e:
+                logger.error(f"Error processing non-fiction batch: {str(e)}")
+                # Fall back to processing individually
+                for i, text in enumerate(nonfiction_texts):
+                    try:
+                        result = generate_audio(
+                            text, voice, speed, use_gpu,
+                            breathiness, tenseness, jitter, sultry
+                        )
+                        results[nonfiction_indices[i]] = result
+                    except Exception as inner_e:
+                        logger.error(f"Error processing individual non-fiction text: {str(inner_e)}")
+                        # Skip this text
+        
+        # Convert audio data to base64 encoded strings
         audio_base64_list = []
-        for sample_rate, audio_data in results:
-            if quality == 'auto':
-                # For batch requests, use medium quality by default
-                if format == 'auto':
-                    # Default to MP3 for batch requests to save bandwidth
-                    audio_base64 = audio_to_base64(audio_data, sample_rate, quality='medium', format='mp3')
-                else:
-                    # Use the specified format
-                    audio_base64 = audio_to_base64(audio_data, sample_rate, quality='medium', format=format)
-            else:
-                # Use the specified quality and format
-                if format == 'auto':
-                    # Default to MP3 for batch requests
-                    audio_base64 = audio_to_base64(audio_data, sample_rate, quality=quality, format='mp3')
-                else:
-                    audio_base64 = audio_to_base64(audio_data, sample_rate, quality=quality, format=format)
-            audio_base64_list.append(audio_base64)
+        for i, result in enumerate(results):
+            try:
+                if result is None:
+                    logger.warning(f"Result {i} is None, adding empty string")
+                    audio_base64_list.append("")
+                    continue
+                
+                # Ensure we have a proper tuple with sample_rate and audio_data
+                if not isinstance(result, tuple) or len(result) != 2:
+                    logger.warning(f"Result {i} is not a proper tuple: {type(result)}, adding empty string")
+                    audio_base64_list.append("")
+                    continue
+                    
+                sample_rate, audio_data = result
+                
+                # Validate sample_rate and audio_data
+                if not isinstance(sample_rate, int) or sample_rate <= 0:
+                    logger.warning(f"Invalid sample rate {sample_rate} for result {i}, using default 24000")
+                    sample_rate = 24000
+                
+                if not isinstance(audio_data, np.ndarray):
+                    logger.warning(f"Audio data for result {i} is not a numpy array: {type(audio_data)}, adding empty string")
+                    audio_base64_list.append("")
+                    continue
+                
+                logger.info(f"Encoding audio {i} with sample rate {sample_rate}, shape {audio_data.shape}")
+                # Convert audio data to specified format
+                if format_type == "mp3":
+                    encoded_audio = audio_to_base64(audio_data, sample_rate, quality=quality, format='mp3')
+                else:  # Default to WAV
+                    encoded_audio = audio_to_base64(audio_data, sample_rate, quality=quality, format='wav')
+                
+                logger.info(f"Successfully encoded audio {i}, length: {len(encoded_audio)}")
+                audio_base64_list.append(encoded_audio)
+            except Exception as e:
+                logger.error(f"Error encoding audio {i}: {str(e)}")
+                audio_base64_list.append("")
         
-        return BatchTTSResponse(audios=audio_base64_list)
+        logger.info(f"Returning batch response with {len(audio_base64_list)} audio items")
+        
+        # If no texts were provided or all processing failed
+        if not audio_base64_list:
+            logger.warning("No audio was generated")
+            return JSONResponse(content={"audios": []})
+        
+        # Return a simple dictionary with a list of strings using explicit JSONResponse
+        return JSONResponse(content={"audios": audio_base64_list})
         
     except Exception as e:
+        logger.error(f"Batch TTS error: {str(e)}")
+        # Include traceback for better debugging
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

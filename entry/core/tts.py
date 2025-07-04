@@ -14,10 +14,30 @@ from entry.audio_effects import apply_emotion_effects
 from entry.config import get_settings
 
 
+def validate_model_components(models, pipelines, voices, context: str = "TTS request") -> bool:
+    """Validate that all required model components are available"""
+    if not models or not pipelines or not voices:
+        logger.error(f"Unable to process {context} - missing components: models={bool(models)}, pipelines={bool(pipelines)}, voices={bool(voices)}")
+        return False
+    return True
+
+
+def get_model_components():
+    """Get and validate all model components"""
+    models = get_models()
+    pipelines = get_pipelines()
+    voices = get_voices()
+    
+    if not validate_model_components(models, pipelines, voices):
+        raise HTTPException(status_code=503, detail="Service not ready - models not initialized")
+    
+    return models, pipelines, voices
+
+
 def preprocess_text(text: str) -> str:
-    """Preprocess text to handle paragraph flow properly"""
-    text = text.strip()
-    text = re.sub(r'([^\n])\n([^\n])', r'\1 \2', text)
+    """Preprocess text for TTS processing"""
+    # Remove extra whitespace and normalize
+    text = re.sub(r'\s+', ' ', text.strip())
     return text
 
 
@@ -81,98 +101,91 @@ def forward_gpu(ps, ref_s, speed):
 
 
 def generate_audio(
-    text: str, 
-    voice: str = 'af_sky', 
-    speed: float = 1.0, 
-    use_gpu: bool = True, 
-    breathiness: float = 0.0, 
-    tenseness: float = 0.0, 
-    jitter: float = 0.0, 
+    text: str,
+    voice: str = 'af_sky',
+    speed: float = 1.0,
+    use_gpu: bool = True,
+    breathiness: float = 0.0,
+    tenseness: float = 0.0,
+    jitter: float = 0.0,
     sultry: float = 0.0
-) -> Tuple[Tuple[int, np.ndarray], str]:
-    """Core function that generates audio from text"""
-    from loguru import logger
-    settings = get_settings()
-    pipelines = get_pipelines()
-    models = get_models()
-    voices = get_voices()
+) -> Tuple[int, np.ndarray]:
+    """
+    Generate audio from text using the TTS model.
+    
+    Args:
+        text: Text to convert to speech
+        voice: Voice to use (e.g., 'af_sky', 'af_heart')
+        speed: Speech speed multiplier
+        use_gpu: Whether to use GPU model
+        breathiness: Breathiness effect (0.0 to 1.0)
+        tenseness: Tenseness effect (0.0 to 1.0)
+        jitter: Jitter effect (0.0 to 1.0)
+        sultry: Sultry effect (0.0 to 1.0)
+        
+    Returns:
+        Tuple of (sample_rate, audio_data)
+    """
+    # Get model components
+    models, pipelines, voices = get_model_components()
     
     logger.info(f"Generating audio for voice '{voice}' with speed={speed}, use_gpu={use_gpu}")
     logger.info(f"Available pipelines: {list(pipelines.keys())}")
     logger.info(f"Available voices: {list(voices)}")
     
+    # Validate voice
     if voice not in voices:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Voice '{voice}' not found. Available voices: {list(voices)}"
-        )
+        logger.error(f"Voice '{voice}' not found in available voices: {list(voices)}")
+        raise HTTPException(status_code=400, detail=f"Voice '{voice}' not available")
     
-    # Ensure voice prefix exists as a pipeline key
-    voice_prefix = voice[0]  # First character of voice name
-    if voice_prefix not in pipelines:
+    try:
+        # Get pipeline for voice
+        voice_prefix = voice[0]  # 'a' for 'af_sky', 'b' for 'bf_emma', etc.
         available_keys = list(pipelines.keys())
-        logger.error(f"Missing pipeline for voice prefix '{voice_prefix}'. Available: {available_keys}")
         
-        # Try to use any available pipeline as a fallback
-        if len(available_keys) > 0:
-            voice_prefix = available_keys[0]
-            logger.warning(f"Using fallback pipeline key '{voice_prefix}' for voice '{voice}'")
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail=f"No TTS pipelines available. System initialization may be incomplete."
-            )
-    
-    # Get the pipeline safely
-    try:    
+        if voice_prefix not in pipelines:
+            logger.error(f"Missing pipeline for voice prefix '{voice_prefix}'. Available: {available_keys}")
+            raise HTTPException(status_code=500, detail=f"No pipeline available for voice '{voice}'")
+        
         pipeline = pipelines[voice_prefix]
-        # Safely load voice pack
+        
+        # Try to get the pipeline using the voice prefix as fallback
+        if voice not in pipeline.voices:
+            logger.warning(f"Using fallback pipeline key '{voice_prefix}' for voice '{voice}'")
+            # This might work if the pipeline can handle the voice
+            pass
+        
+        # Preprocess text
+        preprocessed_text = preprocess_text(text)
+        
+        # Tokenize text
+        ps = pipeline.tokenize(preprocessed_text)
+        
+        # Get reference audio for voice
         try:
-            pack = pipeline.load_voice(voice)
+            ref_s = pipeline.get_reference_audio(voice)
         except Exception as voice_error:
             logger.error(f"Failed to load voice pack for '{voice}': {str(voice_error)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to load voice '{voice}': {str(voice_error)}"
-            )
-    except Exception as e:
-        logger.error(f"Error accessing pipeline for voice '{voice}': {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"TTS pipeline error: {str(e)}"
-        )
-    use_gpu = use_gpu and torch.cuda.is_available() and settings.cuda_available
-    
-    all_audio_chunks = []
-    all_phonemes = []
-    
-    for _, ps, _ in pipeline(text, voice, speed):
-        ref_s = pack[len(ps)-1]
+            raise HTTPException(status_code=500, detail=f"Failed to load voice '{voice}'")
+        
+        # Generate audio
         try:
-            if use_gpu:
+            if use_gpu and torch.cuda.is_available():
                 audio = forward_gpu(ps, ref_s, speed)
             else:
                 audio = models[False](ps, ref_s, speed)
-                
-            audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
-                
         except Exception as e:
-            if use_gpu:
-                audio = models[False](ps, ref_s, speed)
-                audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
-            else:
-                raise HTTPException(status_code=500, detail=str(e))
+            logger.error(f"GPU generation failed, falling back to CPU: {str(e)}")
+            audio = models[False](ps, ref_s, speed)
         
-        all_audio_chunks.append(audio.numpy())
-        all_phonemes.append(ps)
-    
-    if not all_audio_chunks:
-        return None, ''
-    
-    combined_audio = np.concatenate(all_audio_chunks)
-    combined_phonemes = '\n'.join(all_phonemes)
-    
-    return (24000, combined_audio), combined_phonemes
+        # Apply emotion effects
+        audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
+        
+        return 24000, audio
+        
+    except Exception as e:
+        logger.error(f"Error accessing pipeline for voice '{voice}': {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error generating audio: {str(e)}")
 
 
 def generate_audio_batch(

@@ -21,95 +21,58 @@ from loguru import logger
 router = APIRouter()
 
 
-@router.post("/", response_class=StreamingResponse)
+@router.post("/", response_class=Response)
 async def text_to_speech(request: TTSRequest):
-    """Convert text to speech and return audio"""
+    """Convert text to speech"""
+    # Get and validate model components
+    models, pipelines, voices = get_model_components()
+    
+    logger.info(f"TTS request for voice {request.voice} with quality {request.quality} and format {request.format}")
+    
+    # Generate audio
     try:
-        # Validate that models are loaded and accessible
-        from entry.core.models import get_models, get_pipelines, get_voices
-        # Pre-log the current state for diagnostics
-        models = get_models()
-        pipelines = get_pipelines()
-        voices = get_voices()
-        logger.info(f"TTS endpoint has access to: models={len(models)}, pipelines={len(pipelines)}, voices={len(voices)}")
-        
-        if not models or not pipelines or not voices:
-            logger.error(f"Unable to process TTS request - missing components: models={bool(models)}, pipelines={bool(pipelines)}, voices={bool(voices)}")
-            raise HTTPException(status_code=503, detail="TTS system not fully initialized")
-        
-        # Extract request parameters
-        text = request.text
-        voice = request.voice
-        speed = request.speed
-        quality = getattr(request, 'quality', 'auto') if hasattr(request, 'quality') else 'auto'
-        format = getattr(request, 'format', 'auto') if hasattr(request, 'format') else 'auto'
-        
-        logger.info(f"TTS request for voice {voice} with quality {quality} and format {format}")
-        
-        # Select voice and preset
-        preset_name = getattr(request, 'preset', None) if hasattr(request, 'preset') else None
-        selected_voice, emotion_preset = select_voice_and_preset(
-            request.voice, preset_name, fiction=request.fiction
-        )
-
-        # Apply preset values if available (ENFORCE presets)
-        if emotion_preset:
-            speed = emotion_preset['speed']
-            breathiness = emotion_preset['breathiness']
-            tenseness = emotion_preset['tenseness']
-            jitter = emotion_preset['jitter']
-            sultry = emotion_preset['sultry']
-        else:
-            breathiness = request.breathiness
-            tenseness = request.tenseness
-            jitter = request.jitter
-            sultry = request.sultry
-
-        preprocessed_text = preprocess_text(request.text)
-
-        # Use GPU if available based on settings
-        settings = get_settings()
-        use_gpu = settings.cuda_available
-        
-        (sample_rate, audio_data), phonemes = generate_audio(
-            preprocessed_text,
-            selected_voice,
-            speed,
-            use_gpu,
-            breathiness,
-            tenseness,
-            jitter,
-            sultry
+        result = generate_audio(
+            text=request.text,
+            voice=request.voice,
+            speed=request.speed,
+            use_gpu=request.use_gpu,
+            breathiness=request.breathiness,
+            tenseness=request.tenseness,
+            jitter=request.jitter,
+            sultry=request.sultry
         )
         
-        if audio_data is None:
+        if result is None:
             logger.error("Audio generation failed - returned None")
-            raise HTTPException(status_code=500, detail="Audio generation failed - returned None")
-
-        # Handle different quality and format settings
-        if quality == 'auto' or format == 'auto':
-            # Automatically optimize response size to avoid Cloud Run limits
-            audio_buffer, used_quality, used_format = optimize_response_size(
-                audio_data, sample_rate, max_size_kb=30000, use_mp3=(format != 'wav')
-            )
-            logger.info(f"Auto-selected quality: {used_quality}, format: {used_format} for response")
-            content_type = "audio/mpeg" if used_format == 'mp3' else "audio/wav"
-            file_ext = "mp3" if used_format == 'mp3' else "wav"
-        else:
-            # Use the specified quality and format
-            audio_buffer, content_type = create_audio_response(audio_data, sample_rate, quality=quality, format=format)
-            file_ext = "mp3" if format == 'mp3' else "wav"
-            
-        return StreamingResponse(
-            audio_buffer, 
+            raise HTTPException(status_code=500, detail="Audio generation failed")
+        
+        sample_rate, audio_data = result
+        
+        # Auto-optimize response size for Cloud Run
+        audio_buffer, used_quality, used_format = optimize_response_size(
+            audio_data, sample_rate, max_size_kb=1000, preferred_format=request.format
+        )
+        
+        # Create response with optimized audio
+        audio_buffer, content_type = create_audio_response(audio_data, sample_rate, quality=request.quality, format=request.format)
+        
+        logger.info(f"Auto-selected quality: {used_quality}, format: {used_format} for response")
+        
+        return Response(
+            content=audio_buffer.getvalue(),
             media_type=content_type,
             headers={
-                "Content-Disposition": f"attachment; filename=tts_{selected_voice}_{quality}.{file_ext}"
+                "X-Audio-Quality": used_quality,
+                "X-Audio-Format": used_format,
+                "X-Sample-Rate": str(sample_rate)
             }
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"TTS generation error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"TTS generation failed: {str(e)}")
 
 
 @router.post("/batch")
@@ -400,60 +363,26 @@ async def batch_text_to_speech(request: Request):
 @router.post("/base64", response_model=TTSResponse)
 async def text_to_speech_base64(request: TTSRequest):
     """Convert text to speech and return audio as base64 encoded string"""
+    # Get and validate model components
+    models, pipelines, voices = get_model_components()
+    
+    # Generate audio
     try:
-        # Validate that models are loaded and accessible
-        from entry.core.models import get_models, get_pipelines, get_voices
-        models = get_models()
-        pipelines = get_pipelines()
-        voices = get_voices()
-        logger.info(f"Base64 TTS endpoint has access to: models={len(models)}, pipelines={len(pipelines)}, voices={len(voices)}")
-        
-        if not models or not pipelines or not voices:
-            logger.error(f"Unable to process Base64 TTS request - missing components: models={bool(models)}, pipelines={bool(pipelines)}, voices={bool(voices)}")
-            raise HTTPException(status_code=503, detail="TTS system not fully initialized")
-        
-        selected_voice, emotion_preset = select_voice_and_preset(
-            request.voice, fiction=request.fiction
+        result = generate_audio(
+            text=request.text,
+            voice=request.voice,
+            speed=request.speed,
+            use_gpu=request.use_gpu,
+            breathiness=request.breathiness,
+            tenseness=request.tenseness,
+            jitter=request.jitter,
+            sultry=request.sultry
         )
         
-        # Apply preset values or use request values
-        speed = request.speed
-        breathiness = request.breathiness
-        tenseness = request.tenseness
-        jitter = request.jitter
-        sultry = request.sultry
-        
-        if emotion_preset:
-            if request.speed == 1.0 and "speed" in emotion_preset:
-                speed = emotion_preset["speed"]
-            if request.breathiness == 0.0 and "breathiness" in emotion_preset:
-                breathiness = emotion_preset["breathiness"]
-            if request.tenseness == 0.0 and "tenseness" in emotion_preset:
-                tenseness = emotion_preset["tenseness"]
-            if request.jitter == 0.0 and "jitter" in emotion_preset:
-                jitter = emotion_preset["jitter"]
-            if request.sultry == 0.0 and "sultry" in emotion_preset:
-                sultry = emotion_preset["sultry"]
-
-        preprocessed_text = preprocess_text(request.text)
-        
-        # Get GPU availability from settings
-        settings = get_settings()
-        use_gpu = settings.cuda_available
-        
-        (sample_rate, audio_data), phonemes = generate_audio(
-            preprocessed_text, 
-            selected_voice,
-            speed, 
-            use_gpu,  # Use GPU if available based on settings
-            breathiness,
-            tenseness,
-            jitter,
-            sultry
-        )
-        
-        if audio_data is None:
+        if result is None:
             raise HTTPException(status_code=500, detail="Failed to generate audio")
+        
+        sample_rate, audio_data = result
         
         # Get quality and format parameters
         quality = request.quality.value
@@ -463,7 +392,7 @@ async def text_to_speech_base64(request: TTSRequest):
         if quality == 'auto' or format == 'auto':
             # For base64 responses, optimize size based on quality and format
             audio_buffer, used_quality, used_format = optimize_response_size(
-                audio_data, sample_rate, max_size_kb=30000, use_mp3=(format != 'wav')
+                audio_data, sample_rate, max_size_kb=30000, preferred_format=format
             )
             # Convert the optimized buffer to base64
             audio_bytes = audio_buffer.getvalue()
@@ -485,11 +414,14 @@ async def text_to_speech_base64(request: TTSRequest):
         return TTSResponse(
             sample_rate=actual_sample_rate,
             audio_base64=audio_base64,
-            phonemes=phonemes
+            phonemes=""  # No phonemes returned in simplified version
         )
     
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Base64 TTS generation error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"TTS generation failed: {str(e)}")
 
 
 @router.post("/tokenize", response_model=TokenizeResponse)

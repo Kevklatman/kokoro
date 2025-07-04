@@ -200,6 +200,20 @@ def load_voices(local_pipelines, models_dir):
     return available_voices
 
 
+def ensure_critical_voices():
+    """Ensure critical voices (af_sky, af_heart) are available in VOICES set"""
+    global MANUAL_VOICES_ADDED
+    critical_voices = ['af_sky', 'af_heart']
+    
+    for voice in critical_voices:
+        if voice not in VOICES:
+            VOICES.add(voice)
+            MANUAL_VOICES_ADDED = True
+            logger.warning(f"Manually added missing critical voice: {voice}")
+    
+    return MANUAL_VOICES_ADDED
+
+
 def initialize_models(force_online=False):
     """Initialize TTS models and pipelines using the centralized model loading functionality"""
     global models, pipelines, VOICES, default_model, MANUAL_VOICES_ADDED
@@ -262,15 +276,7 @@ def initialize_models(force_online=False):
             logger.info(f"Loaded {len(VOICES)} voices successfully: {', '.join(sorted(VOICES))}")
             
             # Ensure critical voices are available
-            if 'af_sky' not in VOICES:
-                VOICES.add('af_sky')
-                MANUAL_VOICES_ADDED = True
-                logger.warning("Manually added missing critical voice: af_sky")
-            
-            if 'af_heart' not in VOICES:
-                VOICES.add('af_heart')
-                MANUAL_VOICES_ADDED = True
-                logger.warning("Manually added missing critical voice: af_heart")
+            ensure_critical_voices()
                 
             # Validate initialization
             if len(models) < 1 or len(pipelines) < 1 or len(VOICES) < 1:
@@ -315,13 +321,8 @@ def get_pipelines():
 
 def get_voices():
     """Get available voices"""
-    # Always ensure the expected voices are in the set
-    if 'af_sky' not in VOICES:
-        VOICES.add('af_sky')
-        logger.warning("Had to add missing voice: af_sky")
-    if 'af_heart' not in VOICES:
-        VOICES.add('af_heart')
-        logger.warning("Had to add missing voice: af_heart")
+    # Ensure critical voices are available
+    ensure_critical_voices()
     
     # If we had to manually add voices, warn about potential issues
     if MANUAL_VOICES_ADDED:

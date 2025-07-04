@@ -228,49 +228,48 @@ def create_wav_response(audio_data: np.ndarray, sample_rate: int = 24000, qualit
     return buffer
 
 
-def optimize_response_size(audio_data: np.ndarray, sample_rate: int = 24000, 
-                          max_size_kb: int = 10000, use_mp3: bool = True) -> Tuple[io.BytesIO, str, str]:
-    """Automatically optimize audio response size to fit within Cloud Run limits
-    
-    Args:
-        audio_data: Audio data as numpy array
-        sample_rate: Sample rate of the audio
-        max_size_kb: Maximum allowed response size in KB (default: 10MB)
-        use_mp3: Whether to try MP3 format for better compression
-        
-    Returns:
-        Tuple of (BytesIO buffer, quality level used, format used)
-    """
-    # Try high quality WAV first
-    quality = 'high'
-    format = 'wav'
-    audio_bytes = audio_to_bytes(audio_data, sample_rate, quality, format)
-    
-    # If too large, try medium quality WAV
-    if len(audio_bytes) > max_size_kb * 1024:
-        quality = 'medium'
+def _try_audio_quality(audio_data: np.ndarray, sample_rate: int, quality: str, format: str) -> Tuple[bytes, str, str]:
+    """Try to create audio with specified quality and format"""
+    try:
         audio_bytes = audio_to_bytes(audio_data, sample_rate, quality, format)
-        
-        # If still too large, try low quality WAV
-        if len(audio_bytes) > max_size_kb * 1024:
-            quality = 'low'
-            audio_bytes = audio_to_bytes(audio_data, sample_rate, quality, format)
-            
-            # If still too large and MP3 is allowed, switch to MP3
-            if len(audio_bytes) > max_size_kb * 1024 and use_mp3:
-                format = 'mp3'
-                quality = 'medium'  # Start with medium quality MP3
-                audio_bytes = audio_to_bytes(audio_data, sample_rate, quality, format)
-                
-                # If still too large, try low quality MP3
-                if len(audio_bytes) > max_size_kb * 1024:
-                    quality = 'low'
-                    audio_bytes = audio_to_bytes(audio_data, sample_rate, quality, format)
-                    
-                    # If still too large, log a warning
-                    if len(audio_bytes) > max_size_kb * 1024:
-                        logger.warning(f"Audio response still exceeds {max_size_kb}KB even with low quality MP3")
+        return audio_bytes, quality, format
+    except Exception as e:
+        logger.warning(f"Failed to create {quality} quality {format}: {str(e)}")
+        return None, quality, format
+
+
+def optimize_response_size(audio_data: np.ndarray, sample_rate: int = 24000,
+                          max_size_kb: int = 1000, 
+                          preferred_format: str = 'mp3') -> Tuple[io.BytesIO, str, str]:
+    """
+    Optimize audio response size by trying different quality/format combinations.
+    Returns (audio_buffer, used_quality, used_format)
+    """
+    # Quality/format combinations to try, in order of preference
+    combinations = [
+        ('high', preferred_format),
+        ('medium', preferred_format),
+        ('low', preferred_format),
+        ('low', 'wav' if preferred_format == 'mp3' else 'mp3'),  # Try alternative format
+    ]
     
-    logger.info(f"Optimized audio response using {quality} quality {format.upper()}. Size: {len(audio_bytes)/1024:.1f}KB")
-    buffer = io.BytesIO(audio_bytes)
-    return buffer, quality, format
+    for quality, format in combinations:
+        audio_bytes, used_quality, used_format = _try_audio_quality(audio_data, sample_rate, quality, format)
+        
+        if audio_bytes is not None:
+            size_kb = len(audio_bytes) / 1024
+            if size_kb <= max_size_kb:
+                logger.info(f"Optimized audio response using {quality} quality {format.upper()}. Size: {size_kb:.1f}KB")
+                return io.BytesIO(audio_bytes), used_quality, used_format
+            else:
+                logger.warning(f"Audio response still exceeds {max_size_kb}KB with {quality} quality {format.upper()}")
+    
+    # If all combinations fail, use the last successful one (or fallback)
+    logger.warning(f"Audio response still exceeds {max_size_kb}KB even with low quality MP3")
+    fallback_bytes, _, _ = _try_audio_quality(audio_data, sample_rate, 'low', 'mp3')
+    if fallback_bytes is None:
+        # Ultimate fallback - use wav with low quality
+        fallback_bytes = audio_to_wav_bytes(audio_data, sample_rate, quality='low')
+    
+    logger.info(f"Using fallback audio response. Size: {len(fallback_bytes)/1024:.1f}KB")
+    return io.BytesIO(fallback_bytes), 'low', 'mp3'

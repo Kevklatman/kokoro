@@ -61,10 +61,6 @@ VOICE_PRESETS = {
     }
 }
 
-
-
-# IgnoreKeyUnpickler moved to centralized kokoro.model_loader module
-            
 def authenticate_huggingface():
     """Authenticate with Hugging Face if token is provided"""
     settings = get_settings()
@@ -193,7 +189,6 @@ def load_voices(local_pipelines, models_dir):
                     logger.info(f"Successfully loaded voice with safe loader: {voice}")
                 except Exception as e:
                     logger.error(f"Failed to load voice {voice}: {str(e)}")
-                    import traceback
                     logger.error(f"Full traceback:\n{traceback.format_exc()}")
         except Exception as e:
             logger.error(f"Voice loading process failed for {voice}: {str(e)}")
@@ -210,7 +205,6 @@ def initialize_models(force_online=False):
     global models, pipelines, VOICES, default_model, MANUAL_VOICES_ADDED
     
     # Log PyTorch version for debugging
-    import torch
     logger.info(f"Using PyTorch version: {torch.__version__}")
     
     settings = get_settings()
@@ -283,7 +277,6 @@ def initialize_models(force_online=False):
                 raise RuntimeError(f"Initialization incomplete: models={len(models)}, pipelines={len(pipelines)}, voices={len(VOICES)}")
                 
         except Exception as e:
-            import traceback
             logger.error(f"Error initializing models: {str(e)}")
             logger.error(f"Full traceback:\n{traceback.format_exc()}")
             raise
@@ -335,11 +328,6 @@ def get_voices():
         logger.warning("Using manually added voices - voice models may not be properly loaded")
         
     return VOICES
-
-
-def get_voice_choices():
-    """Get voice choices mapping"""
-    return CHOICES
 
 
 def get_voice_presets():

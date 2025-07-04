@@ -4,44 +4,43 @@ Voice management API routes
 from fastapi import APIRouter, HTTPException
 
 from entry.models import VoicesResponse, VoiceChoicesResponse, VoicePresetsResponse
-from entry.core.models import get_voices, get_voice_choices, get_voice_presets
+from entry.core.models import get_voices, get_voice_presets, CHOICES
 
 router = APIRouter()
 
 
-@router.get("/voices", response_model=VoicesResponse)
+@router.get("/", response_model=VoicesResponse)
 async def list_voices():
-    """List all available voices"""
+    """Get list of available voices"""
     voices = get_voices()
     return VoicesResponse(voices=list(voices))
 
 
-@router.get("/voice-choices", response_model=VoiceChoicesResponse)
+@router.get("/choices", response_model=VoiceChoicesResponse)
 async def list_voice_choices():
-    """List user-friendly voice choices (display name and id)"""
-    choices = get_voice_choices()
+    """Get voice choices mapping"""
+    choices = CHOICES
     return VoiceChoicesResponse(choices=choices)
 
 
-@router.get("/voice-presets", response_model=VoicePresetsResponse)
+@router.get("/presets", response_model=VoicePresetsResponse)
 async def list_voice_presets():
-    """List available voice presets and their parameters"""
+    """Get available voice presets"""
     presets = get_voice_presets()
     return VoicePresetsResponse(presets=presets)
 
 
-@router.get("/voice-presets/{preset_name}")
+@router.get("/presets/{preset_name}")
 async def get_voice_preset(preset_name: str):
-    """Get a specific voice preset"""
+    """Get specific voice preset by name"""
     presets = get_voice_presets()
-    if preset_name in presets:
-        return {"preset": presets[preset_name]}
-    else:
-        raise HTTPException(status_code=404, detail="Preset not found")
+    if preset_name not in presets:
+        raise HTTPException(status_code=404, detail=f"Preset '{preset_name}' not found")
+    return presets[preset_name]
 
 
-@router.get("/choices", response_model=VoiceChoicesResponse)
+@router.get("/list", response_model=VoiceChoicesResponse)
 async def list_choices():
-    """List user-friendly voice choices (display name and id) - alias for voice-choices"""
-    choices = get_voice_choices()
+    """Get voice choices mapping (alias for /choices)"""
+    choices = CHOICES
     return VoiceChoicesResponse(choices=choices)

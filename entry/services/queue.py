@@ -200,5 +200,7 @@ def cancel_job(job_id: str) -> str:
     return "Job already completed or failed"
 
 
-# Start the queue processor when module is imported
-start_queue_processor()
+# Only start the queue processor if this module is being used directly
+# or if explicitly requested, not on every import
+if __name__ == "__main__":
+    start_queue_processor()

@@ -1,5 +1,5 @@
 """
-FastAPI Application Entry Point
+FastAPI application entry point for Kokoro TTS API
 """
 import os
 import sys
@@ -14,7 +14,12 @@ from dotenv import load_dotenv
 
 from entry.config import get_settings
 from entry.routers import tts, jobs, voices, streams, debug
-from entry.core.models import initialize_models, get_voices
+from entry.core.models import (
+    initialize_models, 
+    get_voices, 
+    get_models, 
+    get_pipelines
+)
 
 # Global flags to track model loading state
 MODELS_LOADED = False
@@ -52,6 +57,11 @@ def create_app() -> FastAPI:
         
         logger.info("Initializing models - startup process beginning")
         
+        # Start the queue processor for background job processing
+        from entry.services.queue import start_queue_processor
+        start_queue_processor()
+        logger.info("Queue processor started for background job processing")
+        
         # For Cloud Run, we need to make initialization non-blocking
         # to allow the health check endpoint to respond quickly
         def init_models_thread():
@@ -72,7 +82,6 @@ def create_app() -> FastAPI:
                     initialize_models(force_online=force_online)
                     
                     # Verify models are properly loaded by checking outputs of core functions
-                    from entry.core.models import get_models, get_pipelines, get_voices
                     models = get_models()
                     pipelines = get_pipelines()
                     voices = get_voices()
@@ -163,7 +172,6 @@ def create_app() -> FastAPI:
             # Simple check to ensure models are initialized
             # We don't need to perform detailed validation here since the TTS endpoints
             # will handle specific validation and fallbacks
-            from entry.core.models import get_models, get_voices
             models = get_models()
             voices = get_voices()
             
@@ -181,7 +189,6 @@ def create_app() -> FastAPI:
                 
             # For debugging - add detailed info about model components
             if request.url.path.startswith('/debug'):
-                from entry.core.models import get_pipelines
                 pipelines = get_pipelines()
                 logger.info(f"Debug route models: {list(models.keys())}, pipelines: {list(pipelines.keys())}, voices: {list(voices)}")
                 
@@ -207,9 +214,3 @@ if __name__ == "__main__":
     
     print(f"Starting development server at {host}:{port} (reload={reload_mode})")
     uvicorn.run("entry.main:app", host=host, port=port, reload=reload_mode)
-    
-    # NOTE: For production, this block will not be executed.
-    # Instead, the container orchestration should:
-    # 1. Import the 'app' object directly
-    # 2. Set up proper process management
-    # 3. Configure via environment variables

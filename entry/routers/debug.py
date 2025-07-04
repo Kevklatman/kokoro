@@ -9,6 +9,9 @@ from typing import Dict, Any, Optional
 from entry.core.tts import preprocess_text, generate_audio, select_voice_and_preset, is_gpu_available, get_gpu_settings, get_model_components, tokenize_text
 from entry.config import get_settings, parse_bool_env
 import torch
+from entry.utils.error_handling import (
+    safe_execute, handle_http_error, log_operation_start, log_operation_success, log_operation_failure
+)
 
 router = APIRouter(
     prefix="/debug",
@@ -38,7 +41,9 @@ class DebugResponse(BaseModel):
 @router.post("/tts-pipeline", response_model=DebugResponse)
 async def debug_tts_pipeline(request: DebugTTSRequest) -> DebugResponse:
     """Debug TTS pipeline with detailed information"""
-    try:
+    log_operation_start("TTS pipeline debug", voice=request.voice, text_length=len(request.text))
+    
+    def debug_pipeline_safe():
         # Get model components
         models, pipelines, voices = get_model_components()
         
@@ -88,9 +93,13 @@ async def debug_tts_pipeline(request: DebugTTSRequest) -> DebugResponse:
             system_info=system_info,
             phonemes=phonemes
         )
-        
+    
+    try:
+        result = safe_execute(debug_pipeline_safe, context="TTS pipeline debug")
+        log_operation_success("TTS pipeline debug", voice=request.voice)
+        return result
     except Exception as e:
-        logger.error(f"Debug TTS pipeline error: {str(e)}")
+        log_operation_failure("TTS pipeline debug", e, voice=request.voice)
         return DebugResponse(
             success=False,
             error=str(e),
@@ -102,25 +111,35 @@ async def debug_tts_pipeline(request: DebugTTSRequest) -> DebugResponse:
         )
 
 @router.get("/gpu-info")
-async def get_gpu_info() -> Dict[str, Any]:
-    """Get GPU and device information"""
-    try:
-        settings = get_settings()
-        info = {
-            "torch_version": torch.__version__,
-            "cuda_available": torch.cuda.is_available(),
-            "cuda_device_count": torch.cuda.device_count() if torch.cuda.is_available() else 0,
-            "settings_cuda_available": settings.cuda_available,
-            "current_device": str(torch.cuda.current_device()) if torch.cuda.is_available() else "N/A",
+async def get_gpu_info():
+    """Get detailed GPU information"""
+    log_operation_start("GPU info check")
+    
+    def get_gpu_info_safe():
+        cuda_available, settings_cuda = get_gpu_settings()
+        
+        gpu_info = {
+            "cuda_available": cuda_available,
+            "settings_cuda_enabled": settings_cuda,
+            "torch_version": torch.__version__
         }
         
-        if torch.cuda.is_available():
-            info["gpu_name"] = torch.cuda.get_device_name(0)
-            info["gpu_memory_total"] = torch.cuda.get_device_properties(0).total_memory
-            info["gpu_memory_allocated"] = torch.cuda.memory_allocated(0)
-            info["gpu_memory_cached"] = torch.cuda.memory_reserved(0)
+        if cuda_available:
+            gpu_info.update({
+                "device_count": torch.cuda.device_count(),
+                "current_device": torch.cuda.current_device(),
+                "device_name": torch.cuda.get_device_name(0),
+                "memory_allocated_gb": torch.cuda.memory_allocated() / 1024**3,
+                "memory_reserved_gb": torch.cuda.memory_reserved() / 1024**3,
+                "memory_cached_gb": torch.cuda.memory_reserved() / 1024**3
+            })
         
-        return info
+        return gpu_info
+    
+    try:
+        result = safe_execute(get_gpu_info_safe, context="GPU info check")
+        log_operation_success("GPU info check", cuda_available=result["cuda_available"])
+        return result
     except Exception as e:
-        logger.exception("Failed to get GPU info")
-        raise HTTPException(status_code=500, detail=f"GPU info failed: {str(e)}")
+        log_operation_failure("GPU info check", e)
+        raise handle_http_error(e, context="GPU info check")

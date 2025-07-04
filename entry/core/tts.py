@@ -14,6 +14,19 @@ from entry.audio_effects import apply_emotion_effects
 from entry.config import get_settings
 
 
+def is_gpu_available() -> bool:
+    """Check if GPU is available and enabled in settings"""
+    settings = get_settings()
+    return torch.cuda.is_available() and settings.cuda_available
+
+
+def get_gpu_settings() -> tuple[bool, bool]:
+    """Get GPU availability and settings in one call"""
+    settings = get_settings()
+    cuda_available = torch.cuda.is_available() and settings.cuda_available
+    return cuda_available, settings.cuda_available
+
+
 def validate_model_components(models, pipelines, voices, context: str = "TTS request") -> bool:
     """Validate that all required model components are available"""
     if not models or not pipelines or not voices:
@@ -170,7 +183,7 @@ def generate_audio(
         
         # Generate audio
         try:
-            if use_gpu and torch.cuda.is_available():
+            if use_gpu and is_gpu_available():
                 audio = forward_gpu(ps, ref_s, speed)
             else:
                 audio = models[False](ps, ref_s, speed)

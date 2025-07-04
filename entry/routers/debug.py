@@ -6,8 +6,8 @@ from pydantic import BaseModel
 from loguru import logger
 from typing import Dict, Any, Optional
 
-from entry.core.tts import preprocess_text, generate_audio, select_voice_and_preset
-from entry.config import get_settings
+from entry.core.tts import preprocess_text, generate_audio, select_voice_and_preset, is_gpu_available, get_gpu_settings, get_model_components, tokenize_text
+from entry.config import get_settings, parse_bool_env
 import torch
 
 router = APIRouter(
@@ -19,103 +19,87 @@ class DebugTTSRequest(BaseModel):
     text: str
     voice: Optional[str] = None
     fiction: bool = False
+    speed: float = 1.0
+    breathiness: float = 0.0
+    tenseness: float = 0.0
+    jitter: float = 0.0
+    sultry: float = 0.0
+    use_gpu: bool = False
 
 class DebugResponse(BaseModel):
-    status: str
-    details: Dict[str, Any]
+    success: bool
+    error: Optional[str] = None
+    audio_length: int
+    sample_rate: float
+    phoneme_length: int
+    system_info: Dict[str, Any]
+    phonemes: str
 
-@router.post("/tts-pipeline")
+@router.post("/tts-pipeline", response_model=DebugResponse)
 async def debug_tts_pipeline(request: DebugTTSRequest) -> DebugResponse:
-    """Debug the TTS pipeline with detailed logging"""
+    """Debug TTS pipeline with detailed information"""
     try:
-        # Process similar to the normal TTS route but with more logging
-        text = request.text
-        voice = request.voice
-        fiction = request.fiction
+        # Get model components
+        models, pipelines, voices = get_model_components()
         
-        logger.info(f"Debug TTS request for voice {voice} with fiction={fiction}")
+        # Get GPU settings
+        cuda_available, settings_cuda = get_gpu_settings()
         
-        # Preprocess the text
-        preprocessed_text = preprocess_text(text)
-        logger.info(f"Preprocessed text: '{preprocessed_text}'")
+        # Generate audio for debugging
+        sample_rate, audio_data = generate_audio(
+            text=request.text,
+            voice=request.voice,
+            speed=request.speed,
+            use_gpu=request.use_gpu,
+            breathiness=request.breathiness,
+            tenseness=request.tenseness,
+            jitter=request.jitter,
+            sultry=request.sultry
+        )
         
-        # Select voice and preset
-        selected_voice, emotion_preset = select_voice_and_preset(voice, fiction=fiction)
-        logger.info(f"Selected voice: {selected_voice}, preset: {emotion_preset}")
+        # Tokenize text
+        phonemes = tokenize_text(request.text)
         
-        # Set parameters from preset
-        if emotion_preset:
-            speed = emotion_preset['speed']
-            breathiness = emotion_preset['breathiness']
-            tenseness = emotion_preset['tenseness']
-            jitter = emotion_preset['jitter']
-            sultry = emotion_preset['sultry']
-        else:
-            speed = 1.0
-            breathiness = 0.0
-            tenseness = 0.0
-            jitter = 0.0
-            sultry = 0.0
-            
-        # Use GPU if available based on settings
-        settings = get_settings()
-        use_gpu = settings.cuda_available
+        # Get system info
+        system_info = {
+            "cuda_available": cuda_available,
+            "cuda_device_count": torch.cuda.device_count() if cuda_available else 0,
+            "cuda_device_name": torch.cuda.get_device_name(0) if cuda_available else "N/A",
+            "current_device": str(torch.cuda.current_device()) if cuda_available else "N/A",
+            "torch_version": torch.__version__,
+            "models_loaded": len(models),
+            "pipelines_loaded": len(pipelines),
+            "voices_loaded": len(voices)
+        }
         
-        # Try to generate audio
-        try:
-            logger.info("Starting audio generation...")
-            result, phonemes = generate_audio(
-                preprocessed_text,
-                selected_voice,
-                speed,
-                use_gpu,
-                breathiness,
-                tenseness,
-                jitter,
-                sultry
-            )
-            
-            if result is None:
-                logger.error("Audio generation returned None")
-                return DebugResponse(
-                    status="error",
-                    details={
-                        "message": "Audio generation returned None",
-                        "preprocessed_text": preprocessed_text,
-                        "selected_voice": selected_voice,
-                        "phonemes": phonemes
-                    }
-                )
-            
-            sample_rate, audio_data = result
-            logger.info(f"Audio generated successfully! Sample rate: {sample_rate}, shape: {audio_data.shape}")
-            
-            return DebugResponse(
-                status="success",
-                details={
-                    "sample_rate": sample_rate,
-                    "audio_length": len(audio_data),
-                    "preprocessed_text": preprocessed_text,
-                    "selected_voice": selected_voice,
-                    "phoneme_length": len(phonemes)
-                }
-            )
+        # Get memory info if CUDA is available
+        if cuda_available:
+            system_info.update({
+                "cuda_memory_allocated": f"{torch.cuda.memory_allocated() / 1024**3:.2f}GB",
+                "cuda_memory_reserved": f"{torch.cuda.memory_reserved() / 1024**3:.2f}GB",
+                "cuda_memory_cached": f"{torch.cuda.memory_reserved() / 1024**3:.2f}GB"
+            })
         
-        except Exception as e:
-            logger.exception("Error during audio generation")
-            return DebugResponse(
-                status="error", 
-                details={
-                    "error_type": type(e).__name__,
-                    "error_message": str(e),
-                    "preprocessed_text": preprocessed_text,
-                    "selected_voice": selected_voice
-                }
-            )
-            
+        return DebugResponse(
+            success=True,
+            audio_length=len(audio_data),
+            sample_rate=sample_rate,
+            phoneme_length=len(phonemes),
+            system_info=system_info,
+            phonemes=phonemes
+        )
+        
     except Exception as e:
-        logger.exception("Debug endpoint failed")
-        raise HTTPException(status_code=500, detail=f"Debug failed: {str(e)}")
+        logger.error(f"Debug TTS pipeline error: {str(e)}")
+        return DebugResponse(
+            success=False,
+            error=str(e),
+            audio_length=0,
+            sample_rate=0,
+            phoneme_length=0,
+            system_info={},
+            phonemes=""
+        )
 
 @router.get("/gpu-info")
 async def get_gpu_info() -> Dict[str, Any]:

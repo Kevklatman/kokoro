@@ -12,12 +12,15 @@ from entry.models import (
 )
 from entry.core.tts import (
     generate_audio, generate_audio_batch, tokenize_text, 
-    preprocess_text, select_voice_and_preset
+    preprocess_text, select_voice_and_preset, is_gpu_available, get_model_components
 )
 from entry.core.models import get_settings
 from entry.utils.audio import (
     audio_to_base64, create_wav_response, create_audio_response, 
-    optimize_response_size, audio_to_bytes, ensure_audio_array
+    optimize_response_size, audio_to_bytes, ensure_audio_array,
+    encode_audio_base64, format_quality_info, normalize_audio_data,
+    validate_audio_format, validate_audio_quality, encode_audio_to_format,
+    optimize_audio_size
 )
 from loguru import logger
 
@@ -27,55 +30,48 @@ router = APIRouter()
 @router.post("/", response_class=Response)
 async def text_to_speech(request: TTSRequest):
     """Convert text to speech"""
-    # Get and validate model components
-    models, pipelines, voices = get_model_components()
-    
-    logger.info(f"TTS request for voice {request.voice} with quality {request.quality} and format {request.format}")
-    
-    # Generate audio
     try:
-        result = generate_audio(
+        # Get model components
+        models, pipelines, voices = get_model_components()
+        
+        # Validate request parameters
+        voice = request.voice or 'af_sky'
+        speed = max(0.1, min(5.0, request.speed or 1.0))
+        use_gpu = is_gpu_available() if request.use_gpu is None else request.use_gpu
+        
+        # Select voice and preset
+        selected_voice, emotion_preset = select_voice_and_preset(
+            voice, request.preset_name, request.fiction
+        )
+        
+        # Generate audio
+        sample_rate, audio_data = generate_audio(
             text=request.text,
-            voice=request.voice,
-            speed=request.speed,
-            use_gpu=request.use_gpu,
-            breathiness=request.breathiness,
-            tenseness=request.tenseness,
-            jitter=request.jitter,
-            sultry=request.sultry
+            voice=selected_voice,
+            speed=speed,
+            use_gpu=use_gpu,
+            breathiness=emotion_preset.get('breathiness', 0.0) if emotion_preset else 0.0,
+            tenseness=emotion_preset.get('tenseness', 0.0) if emotion_preset else 0.0,
+            jitter=emotion_preset.get('jitter', 0.0) if emotion_preset else 0.0,
+            sultry=emotion_preset.get('sultry', 0.0) if emotion_preset else 0.0
         )
         
-        if result is None:
-            logger.error("Audio generation failed - returned None")
-            raise HTTPException(status_code=500, detail="Audio generation failed")
+        # Create audio response
+        format_name = validate_audio_format(request.format or 'wav')
+        quality = validate_audio_quality(request.quality or 'high')
         
-        sample_rate, audio_data = result
-        
-        # Auto-optimize response size for Cloud Run
-        audio_buffer, used_quality, used_format = optimize_response_size(
-            audio_data, sample_rate, max_size_kb=1000, preferred_format=request.format
+        response = create_audio_response(
+            audio_data=audio_data,
+            format_name=format_name,
+            quality=quality,
+            max_size_kb=request.max_size_kb or 1024
         )
         
-        # Create response with optimized audio
-        audio_buffer, content_type = create_audio_response(audio_data, sample_rate, quality=request.quality, format=request.format)
+        return response
         
-        logger.info(f"Auto-selected quality: {used_quality}, format: {used_format} for response")
-        
-        return Response(
-            content=audio_buffer.getvalue(),
-            media_type=content_type,
-            headers={
-                "X-Audio-Quality": used_quality,
-                "X-Audio-Format": used_format,
-                "X-Sample-Rate": str(sample_rate)
-            }
-        )
-        
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"TTS generation error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"TTS generation failed: {str(e)}")
+        logger.error(f"Error in text_to_speech: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/batch")
@@ -343,66 +339,50 @@ async def batch_text_to_speech(request: Request):
 
 @router.post("/base64", response_model=TTSResponse)
 async def text_to_speech_base64(request: TTSRequest):
-    """Convert text to speech and return audio as base64 encoded string"""
-    # Get and validate model components
-    models, pipelines, voices = get_model_components()
-    
-    # Generate audio
+    """Convert text to speech and return as base64"""
     try:
-        result = generate_audio(
+        # Get model components
+        models, pipelines, voices = get_model_components()
+        
+        # Validate request parameters
+        voice = request.voice or 'af_sky'
+        speed = max(0.1, min(5.0, request.speed or 1.0))
+        use_gpu = is_gpu_available() if request.use_gpu is None else request.use_gpu
+        
+        # Select voice and preset
+        selected_voice, emotion_preset = select_voice_and_preset(
+            voice, request.preset_name, request.fiction
+        )
+        
+        # Generate audio
+        sample_rate, audio_data = generate_audio(
             text=request.text,
-            voice=request.voice,
-            speed=request.speed,
-            use_gpu=request.use_gpu,
-            breathiness=request.breathiness,
-            tenseness=request.tenseness,
-            jitter=request.jitter,
-            sultry=request.sultry
+            voice=selected_voice,
+            speed=speed,
+            use_gpu=use_gpu,
+            breathiness=emotion_preset.get('breathiness', 0.0) if emotion_preset else 0.0,
+            tenseness=emotion_preset.get('tenseness', 0.0) if emotion_preset else 0.0,
+            jitter=emotion_preset.get('jitter', 0.0) if emotion_preset else 0.0,
+            sultry=emotion_preset.get('sultry', 0.0) if emotion_preset else 0.0
         )
         
-        if result is None:
-            raise HTTPException(status_code=500, detail="Failed to generate audio")
+        # Encode to base64
+        format_name = validate_audio_format(request.format or 'wav')
+        quality = validate_audio_quality(request.quality or 'high')
         
-        sample_rate, audio_data = result
+        audio_bytes = encode_audio_to_format(audio_data, format_name, quality)
+        audio_base64 = encode_audio_base64(audio_bytes)
         
-        # Get quality and format parameters
-        quality = request.quality.value
-        format = request.format.value if hasattr(request, 'format') else 'auto'
-        logger.info(f"Base64 TTS request with quality {quality}, format {format}")
+        return {
+            "audio": audio_base64,
+            "format": format_name,
+            "sample_rate": sample_rate,
+            "size_kb": len(audio_bytes) / 1024
+        }
         
-        if quality == 'auto' or format == 'auto':
-            # For base64 responses, optimize size based on quality and format
-            audio_buffer, used_quality, used_format = optimize_response_size(
-                audio_data, sample_rate, max_size_kb=30000, preferred_format=format
-            )
-            # Convert the optimized buffer to base64
-            audio_bytes = audio_buffer.getvalue()
-            audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
-            logger.info(f"Auto-selected quality: {used_quality}, format: {used_format} for base64 response")
-            # Remember the format for the response
-            format = used_format
-        else:
-            # Use the specified quality and format
-            audio_base64 = audio_to_base64(audio_data, sample_rate, quality=quality, format=format)
-        
-        # Get the actual sample rate after potential downsampling
-        actual_sample_rate = sample_rate
-        if quality == 'medium' or (quality == 'auto' and used_quality == 'medium'):
-            actual_sample_rate = 16000
-        elif quality == 'low' or (quality == 'auto' and used_quality == 'low'):
-            actual_sample_rate = 8000
-        
-        return TTSResponse(
-            sample_rate=actual_sample_rate,
-            audio_base64=audio_base64,
-            phonemes=""  # No phonemes returned in simplified version
-        )
-    
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Base64 TTS generation error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"TTS generation failed: {str(e)}")
+        logger.error(f"Error in text_to_speech_base64: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/tokenize", response_model=TokenizeResponse)

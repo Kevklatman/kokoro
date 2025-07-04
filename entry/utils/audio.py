@@ -201,95 +201,290 @@ def audio_to_bytes(audio_data: np.ndarray, sample_rate: int = 24000,
         return audio_to_wav_bytes(audio_data, sample_rate, quality)
 
 
-def audio_to_base64(audio_data: np.ndarray, sample_rate: int = 24000, 
-                   quality: str = 'high', format: AudioFormat = 'wav') -> str:
-    """Convert audio data to base64 encoded string with compression options
+def encode_audio_base64(audio_bytes: bytes) -> str:
+    """Encode audio bytes to base64 string"""
+    return base64.b64encode(audio_bytes).decode('utf-8')
+
+
+def format_audio_size(audio_bytes: bytes, format_name: str = "audio") -> str:
+    """Format audio size in KB with format name"""
+    size_kb = len(audio_bytes) / 1024
+    return f"{format_name.upper()} size: {size_kb:.1f}KB"
+
+
+def format_quality_info(format_name: str, quality: str, audio_bytes: bytes) -> str:
+    """Format quality information for logging"""
+    size_kb = len(audio_bytes) / 1024
+    return f"{format_name.upper()} response size ({quality}): {size_kb:.1f}KB"
+
+
+def normalize_audio_data(audio_data: np.ndarray, target_sample_rate: int = 24000) -> np.ndarray:
+    """Normalize audio data to target sample rate and ensure proper format"""
+    if audio_data is None:
+        raise ValueError("Audio data is None")
     
-    Args:
-        audio_data: Audio data as numpy array
-        sample_rate: Sample rate of the audio
-        quality: Quality level ('high', 'medium', 'low')
-        format: Output format ('wav' or 'mp3')
-    """
-    audio_bytes = audio_to_bytes(audio_data, sample_rate, quality, format)
-    encoded = base64.b64encode(audio_bytes).decode('utf-8')
+    if len(audio_data) == 0:
+        raise ValueError("Audio data is empty")
+    
+    # Ensure audio is 1D
+    if audio_data.ndim > 1:
+        audio_data = audio_data.flatten()
+    
+    # Normalize to float32 if needed
+    if audio_data.dtype != np.float32:
+        audio_data = audio_data.astype(np.float32)
+    
+    # Ensure values are in valid range
+    if np.max(np.abs(audio_data)) > 1.0:
+        audio_data = np.clip(audio_data, -1.0, 1.0)
+    
+    return audio_data
+
+
+def validate_audio_format(format_name: str) -> str:
+    """Validate and normalize audio format name"""
+    valid_formats = ['wav', 'mp3', 'flac', 'ogg']
+    format_lower = format_name.lower()
+    
+    if format_lower not in valid_formats:
+        raise ValueError(f"Unsupported audio format: {format_name}. Supported: {valid_formats}")
+    
+    return format_lower
+
+
+def validate_audio_quality(quality: str) -> str:
+    """Validate and normalize audio quality setting"""
+    valid_qualities = ['low', 'medium', 'high']
+    quality_lower = quality.lower()
+    
+    if quality_lower not in valid_qualities:
+        raise ValueError(f"Unsupported audio quality: {quality}. Supported: {valid_qualities}")
+    
+    return quality_lower
+
+
+def get_audio_quality_settings(quality: str) -> dict:
+    """Get audio quality settings based on quality level"""
+    quality_settings = {
+        'low': {
+            'sample_rate': 16000,
+            'bitrate': '64k',
+            'channels': 1
+        },
+        'medium': {
+            'sample_rate': 22050,
+            'bitrate': '128k',
+            'channels': 1
+        },
+        'high': {
+            'sample_rate': 24000,
+            'bitrate': '192k',
+            'channels': 1
+        }
+    }
+    
+    normalized_quality = validate_audio_quality(quality)
+    return quality_settings[normalized_quality]
+
+
+def resample_audio(audio_data: np.ndarray, original_rate: int, target_rate: int) -> np.ndarray:
+    """Resample audio to target sample rate"""
+    if original_rate == target_rate:
+        return audio_data
+    
+    ratio = original_rate / target_rate
+    indices = np.arange(0, len(audio_data), ratio)
+    indices = np.minimum(indices, len(audio_data) - 1)
+    
+    return audio_data[indices.astype(int)]
+
+
+def optimize_audio_size(audio_data: np.ndarray, target_size_kb: int, format_name: str = 'wav') -> tuple[bytes, str]:
+    """Optimize audio size by reducing quality until target size is met"""
+    format_lower = validate_audio_format(format_name)
+    
+    # Try different quality levels
+    for quality in ['high', 'medium', 'low']:
+        try:
+            quality_settings = get_audio_quality_settings(quality)
+            
+            if format_lower == 'mp3':
+                audio_bytes = encode_mp3(audio_data, quality_settings['bitrate'])
+            else:
+                audio_bytes = encode_wav(audio_data, quality_settings['sample_rate'])
+            
+            size_kb = len(audio_bytes) / 1024
+            
+            if size_kb <= target_size_kb:
+                logger.info(f"Optimized audio response using {quality} quality {format_lower.upper()}. Size: {size_kb:.1f}KB")
+                return audio_bytes, quality
+            
+        except Exception as e:
+            logger.warning(f"Failed to encode with {quality} quality: {e}")
+            continue
+    
+    # Fallback to lowest quality
+    logger.warning(f"Audio response still exceeds {target_size_kb}KB with {quality} quality {format_lower.upper()}")
+    return encode_wav(audio_data, 16000), 'low'
+
+
+def encode_audio_to_format(audio_data: np.ndarray, format_name: str, quality: str = 'high') -> bytes:
+    """Encode audio data to specified format with quality settings"""
+    format_lower = validate_audio_format(format_name)
+    quality_settings = get_audio_quality_settings(quality)
+    
+    if format_lower == 'mp3':
+        return encode_mp3(audio_data, quality_settings['bitrate'])
+    elif format_lower == 'wav':
+        return encode_wav(audio_data, quality_settings['sample_rate'])
+    else:
+        # For other formats, use wav as fallback
+        return encode_wav(audio_data, quality_settings['sample_rate'])
+
+
+def create_audio_response(audio_data: np.ndarray, format_name: str, quality: str, max_size_kb: int = 1024) -> dict:
+    """Create a complete audio response with optimization"""
+    # Normalize audio data
+    audio_data = normalize_audio_data(audio_data)
+    
+    # Encode audio
+    audio_bytes = encode_audio_to_format(audio_data, format_name, quality)
+    
+    # Check if size optimization is needed
+    size_kb = len(audio_bytes) / 1024
+    if size_kb > max_size_kb:
+        audio_bytes, actual_quality = optimize_audio_size(audio_data, max_size_kb, format_name)
+        quality = actual_quality
+    
+    # Encode to base64 if needed
+    audio_base64 = encode_audio_base64(audio_bytes)
+    
+    return {
+        'audio': audio_base64,
+        'format': format_name,
+        'quality': quality,
+        'size_kb': len(audio_bytes) / 1024
+    }
+
+
+def encode_mp3(audio_data: np.ndarray, bitrate: str = '192k') -> bytes:
+    """Encode audio data to MP3 format"""
+    # Ensure audio is in the correct format for MP3 encoding
+    if audio_data.dtype != np.float32:
+        audio_data = audio_data.astype(np.float32)
+    
+    # Convert bitrate string to integer
+    bitrate_int = int(bitrate.replace('k', '000'))
+    
+    # Encode to MP3
+    mp3_bytes = io.BytesIO()
+    sf.write(mp3_bytes, audio_data, 24000, format='mp3', subtype='MPEG_LAYER_III', bitrate=bitrate_int)
+    mp3_bytes.seek(0)
+    
+    encoded_bytes = mp3_bytes.read()
+    logger.info(f"MP3 encoded size ({bitrate}): {len(encoded_bytes)/1024:.1f}KB")
+    
+    return encoded_bytes
+
+
+def encode_wav(audio_data: np.ndarray, sample_rate: int = 24000) -> bytes:
+    """Encode audio data to WAV format"""
+    # Ensure audio is in the correct format
+    if audio_data.dtype != np.float32:
+        audio_data = audio_data.astype(np.float32)
+    
+    # Encode to WAV
+    wav_bytes = io.BytesIO()
+    sf.write(wav_bytes, audio_data, sample_rate, format='wav', subtype='PCM_16')
+    wav_bytes.seek(0)
+    
+    return wav_bytes.read()
+
+
+def create_fallback_response(audio_data: np.ndarray) -> dict:
+    """Create a fallback audio response with minimal quality"""
+    try:
+        # Use lowest quality settings
+        fallback_bytes = encode_wav(audio_data, 16000)
+        logger.info(f"Using fallback audio response. Size: {len(fallback_bytes)/1024:.1f}KB")
+        
+        return {
+            'audio': encode_audio_base64(fallback_bytes),
+            'format': 'wav',
+            'quality': 'low',
+            'size_kb': len(fallback_bytes) / 1024,
+            'warning': 'Audio optimized to minimum quality due to size constraints'
+        }
+    except Exception as e:
+        logger.error(f"Failed to create fallback response: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate audio response")
+
+
+def audio_to_base64(audio_data: np.ndarray, format: str = 'wav', quality: str = 'high') -> str:
+    """Convert audio data to base64 string"""
+    if format.lower() == 'mp3':
+        audio_bytes = encode_mp3(audio_data, '192k' if quality == 'high' else '128k' if quality == 'medium' else '64k')
+    else:
+        audio_bytes = encode_wav(audio_data, 24000 if quality == 'high' else 22050 if quality == 'medium' else 16000)
+    
+    encoded = encode_audio_base64(audio_bytes)
     logger.info(f"Base64 encoded {format} size: {len(encoded)/1024:.1f}KB")
     return encoded
 
 
-def create_audio_response(audio_data: np.ndarray, sample_rate: int = 24000, 
-                       quality: str = 'medium', format: AudioFormat = 'wav') -> Tuple[io.BytesIO, str]:
-    """Create an audio file response for streaming with compression options
+def optimize_audio_response(audio_data: np.ndarray, format: str, quality: str, max_size_kb: int = 1024) -> Tuple[bytes, str]:
+    """Optimize audio response to fit within size constraints"""
+    original_size = len(audio_data) * (2 if quality == 'high' else (2 if quality == 'medium' else 1))
     
-    Args:
-        audio_data: Audio data as numpy array
-        sample_rate: Sample rate of the audio
-        quality: Quality level ('high', 'medium', 'low')
-            Default is 'medium' to balance quality and response size
-        format: Output format ('wav' or 'mp3')
-        
-    Returns:
-        Tuple of (BytesIO buffer, content_type)
-    """
-    audio_bytes = audio_to_bytes(audio_data, sample_rate, quality, format)
-    buffer = io.BytesIO(audio_bytes)
-    
-    # Determine the content type based on format
-    content_type = "audio/wav" if format == 'wav' else "audio/mpeg"
-    
-    logger.info(f"{format.upper()} response size ({quality}): {len(audio_bytes)/1024:.1f}KB")
-    return buffer, content_type
-
-
-# Keep the original function for backward compatibility
-def create_wav_response(audio_data: np.ndarray, sample_rate: int = 24000, quality: str = 'medium') -> io.BytesIO:
-    """Create a WAV file response for streaming with compression options (legacy function)"""
-    buffer, _ = create_audio_response(audio_data, sample_rate, quality, format='wav')
-    return buffer
-
-
-def _try_audio_quality(audio_data: np.ndarray, sample_rate: int, quality: str, format: str) -> Tuple[bytes, str, str]:
-    """Try to create audio with specified quality and format"""
-    try:
-        audio_bytes = audio_to_bytes(audio_data, sample_rate, quality, format)
-        return audio_bytes, quality, format
-    except Exception as e:
-        logger.warning(f"Failed to create {quality} quality {format}: {str(e)}")
-        return None, quality, format
-
-
-def optimize_response_size(audio_data: np.ndarray, sample_rate: int = 24000,
-                          max_size_kb: int = 1000, 
-                          preferred_format: str = 'mp3') -> Tuple[io.BytesIO, str, str]:
-    """
-    Optimize audio response size by trying different quality/format combinations.
-    Returns (audio_buffer, used_quality, used_format)
-    """
-    # Quality/format combinations to try, in order of preference
-    combinations = [
-        ('high', preferred_format),
-        ('medium', preferred_format),
-        ('low', preferred_format),
-        ('low', 'wav' if preferred_format == 'mp3' else 'mp3'),  # Try alternative format
-    ]
-    
-    for quality, format in combinations:
-        audio_bytes, used_quality, used_format = _try_audio_quality(audio_data, sample_rate, quality, format)
-        
-        if audio_bytes is not None:
+    # Try different quality levels
+    for test_quality in ['high', 'medium', 'low']:
+        try:
+            if format.lower() == 'mp3':
+                bitrate = '192k' if test_quality == 'high' else '128k' if test_quality == 'medium' else '64k'
+                audio_bytes = encode_mp3(audio_data, bitrate)
+            else:
+                sample_rate = 24000 if test_quality == 'high' else 22050 if test_quality == 'medium' else 16000
+                audio_bytes = encode_wav(audio_data, sample_rate)
+            
             size_kb = len(audio_bytes) / 1024
             if size_kb <= max_size_kb:
-                logger.info(f"Optimized audio response using {quality} quality {format.upper()}. Size: {size_kb:.1f}KB")
-                return io.BytesIO(audio_bytes), used_quality, used_format
-            else:
-                logger.warning(f"Audio response still exceeds {max_size_kb}KB with {quality} quality {format.upper()}")
+                logger.info(f"Optimized audio response using {test_quality} quality {format.upper()}. Size: {size_kb:.1f}KB")
+                return audio_bytes, test_quality
+                
+        except Exception as e:
+            logger.warning(f"Failed to encode with {test_quality} quality: {e}")
+            continue
     
-    # If all combinations fail, use the last successful one (or fallback)
-    logger.warning(f"Audio response still exceeds {max_size_kb}KB even with low quality MP3")
-    fallback_bytes, _, _ = _try_audio_quality(audio_data, sample_rate, 'low', 'mp3')
-    if fallback_bytes is None:
-        # Ultimate fallback - use wav with low quality
-        fallback_bytes = audio_to_wav_bytes(audio_data, sample_rate, quality='low')
-    
-    logger.info(f"Using fallback audio response. Size: {len(fallback_bytes)/1024:.1f}KB")
-    return io.BytesIO(fallback_bytes), 'low', 'mp3'
+    # Fallback to lowest quality
+    logger.warning(f"Audio response still exceeds {max_size_kb}KB with {quality} quality {format.upper()}")
+    return encode_wav(audio_data, 16000), 'low'
+
+
+def resample_audio_quality(audio_data: np.ndarray, quality: str) -> np.ndarray:
+    """Resample audio based on quality setting"""
+    if quality == 'high':
+        return audio_data  # Keep original sample rate
+    elif quality == 'medium':
+        ratio = 24000 / 22050
+        indices = np.arange(0, len(audio_data), ratio)
+        indices = np.minimum(indices, len(audio_data) - 1)
+        resampled = audio_data[indices.astype(int)]
+        
+        # Ensure we don't exceed original length
+        new_length = int(len(audio_data) / ratio)
+        if len(resampled) > new_length:
+            resampled = resampled[:new_length]
+        
+        return resampled
+    else:  # low quality
+        ratio = 24000 / 16000
+        indices = np.arange(0, len(audio_data), ratio)
+        indices = np.minimum(indices, len(audio_data) - 1)
+        resampled = audio_data[indices.astype(int)]
+        
+        # Ensure we don't exceed original length
+        new_length = int(len(audio_data) / ratio)
+        if len(resampled) > new_length:
+            resampled = resampled[:new_length]
+        
+        return resampled

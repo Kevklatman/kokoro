@@ -11,8 +11,9 @@ from fastapi import FastAPI, Response, status, HTTPException, BackgroundTasks, R
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from dotenv import load_dotenv
+from fastapi.responses import JSONResponse
 
-from entry.config import get_settings
+from entry.config import get_settings, is_container_environment, parse_bool_env
 from entry.routers import tts, jobs, voices, streams, debug
 from entry.core.models import (
     initialize_models, 
@@ -29,6 +30,35 @@ initialization_error = None
 # Add thread lock for synchronization
 model_init_lock = threading.RLock()
 
+async def check_initialization(request: Request, call_next):
+    """Middleware to check if models are initialized before processing requests"""
+    # Skip initialization check for health check and static files
+    if request.url.path in ["/health", "/favicon.ico"] or request.url.path.startswith("/static/"):
+        return await call_next(request)
+    
+    # Check if models are loaded
+    models = get_models()
+    voices = get_voices()
+    
+    if len(models) == 0 or len(voices) == 0:
+        error_msg = f"Service not ready - models not initialized. Models: {len(models)}, Voices: {len(voices)}"
+        if len(error_msg) > 200:
+            error_msg = error_msg[:197] + "..."
+        
+        logger.error(error_msg)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Service not ready",
+                "detail": "Models are still initializing. Please try again in a few moments.",
+                "models_loaded": len(models),
+                "voices_loaded": len(voices)
+            }
+        )
+    
+    logger.info(f"TTS middleware validation passed: models={len(models)}, voices={len(voices)}")
+    return await call_next(request)
+
 def create_app() -> FastAPI:
     """Create and configure FastAPI application"""
     load_dotenv()
@@ -37,7 +67,9 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Kokoro TTS API",
         description="REST API for Kokoro Text-to-Speech Engine",
-        version="1.0.0"
+        version="1.0.0",
+        docs_url="/docs" if not settings.is_container else None,
+        redoc_url="/redoc" if not settings.is_container else None
     )
 
     # Add CORS middleware
@@ -48,6 +80,9 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Add initialization check middleware
+    app.middleware("http")(check_initialization)
 
     # Initialize models on startup
     @app.on_event("startup")
@@ -138,62 +173,6 @@ def create_app() -> FastAPI:
     @app.get("/")
     async def root():
         return {"message": "Kokoro TTS API is running. Visit /docs for API documentation."}
-
-    @app.middleware("http")
-    async def check_initialization(request: Request, call_next):
-        """Middleware to check if application is initialized"""
-        # Allow health checks and readiness checks to pass through
-        if request.url.path in ["/health", "/ready", "/docs", "/openapi.json", "/redoc"]:
-            return await call_next(request)
-        
-        # Acquire lock to safely check initialization state
-        with model_init_lock:
-            if not initialized:
-                if initialization_error:
-                    # Format and truncate error message to prevent cutoff
-                    error_msg = str(initialization_error)
-                    if "weights_only" in error_msg:
-                        # Special handling for PyTorch 2.6 weights_only errors
-                        error_msg = "PyTorch 2.6 compatibility issue with model loading. The model was created with an older PyTorch version. Please restart the application to retry with fallback loading options."
-                    
-                    # Truncate if too long
-                    if len(error_msg) > 200:
-                        error_msg = error_msg[:197] + "..."
-                        
-                    raise HTTPException(
-                        status_code=503,
-                        detail=f"Service unavailable: {error_msg}"
-                    )
-                raise HTTPException(
-                    status_code=503,
-                    detail="Service is still initializing"
-                )
-            
-            # Simple check to ensure models are initialized
-            # We don't need to perform detailed validation here since the TTS endpoints
-            # will handle specific validation and fallbacks
-            models = get_models()
-            voices = get_voices()
-            
-            # Only perform basic checks for non-empty models and voices
-            if len(models) == 0 or len(voices) == 0:
-                logger.error(f"Critical model components missing at request time: models={len(models)}, voices={len(voices)}")
-                raise HTTPException(
-                    status_code=503, 
-                    detail="Model initialization incomplete - service not ready"
-                )
-            
-            # Log successful validation
-            if request.url.path.startswith('/tts'):
-                logger.info(f"TTS middleware validation passed: models={len(models)}, voices={len(voices)}")
-                
-            # For debugging - add detailed info about model components
-            if request.url.path.startswith('/debug'):
-                pipelines = get_pipelines()
-                logger.info(f"Debug route models: {list(models.keys())}, pipelines: {list(pipelines.keys())}, voices: {list(voices)}")
-                
-                
-        return await call_next(request)
 
     return app
 

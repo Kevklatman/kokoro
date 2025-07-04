@@ -9,6 +9,31 @@ import dotenv
 # Load environment variables from .env file if it exists
 dotenv.load_dotenv()
 
+def parse_bool_env(var_name: str, default: str = "False") -> bool:
+    """Parse boolean environment variable with consistent logic"""
+    return os.getenv(var_name, default).lower() in ("true", "1", "t")
+
+
+def get_env_path(base_path: str, sub_path: str = "") -> str:
+    """Get environment-based path with fallback to current directory"""
+    env_path = os.getenv(base_path)
+    if env_path:
+        return os.path.join(env_path, sub_path) if sub_path else env_path
+    return os.path.join(os.getcwd(), sub_path) if sub_path else os.getcwd()
+
+
+def is_container_environment() -> bool:
+    """Check if running in container environment"""
+    return (parse_bool_env('CONTAINER_ENV', 'false') or 
+            os.getenv('K_SERVICE', '').lower() != '')
+
+
+def get_models_directory() -> str:
+    """Get models directory path with fallback logic"""
+    models_dir = os.getenv('MODELS_DIR', 'models')
+    return get_env_path('MODELS_DIR', models_dir)
+
+
 class Settings:
     """Application settings"""
     
@@ -20,20 +45,24 @@ class Settings:
         self.api_key = os.getenv("API_KEY", "dev-secret-key")
         
         # CORS
-        # Handle allowed origins as a simple comma-separated string
-        allowed_origins_str = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
-        self.allowed_origins = self._parse_allowed_origins(allowed_origins_str)
+        origins_str = os.getenv("ALLOWED_ORIGINS", "*")
+        if origins_str.strip() == "*":
+            self.allowed_origins = ["*"]
+        else:
+            origins = [origin.strip() for origin in origins_str.split(",") if origin.strip()]
+            self.allowed_origins = origins if origins else ["*"]
         
         # Models
-        self.models_dir = os.getenv("MODELS_DIR", "models")
-        self.cuda_available = os.getenv("CUDA_AVAILABLE", "True").lower() in ("true", "1", "t")
+        self.models_dir = get_models_directory()
+        self.models_dir_path = os.path.join(os.getcwd(), self.models_dir)
+        self.cuda_available = parse_bool_env("CUDA_AVAILABLE", "True")
         
         # Hugging Face
         self.hf_token = os.getenv("HF_TOKEN", "")
-        self.offline_mode = os.getenv("OFFLINE_MODE", "False").lower() in ("true", "1", "t")
+        self.offline_mode = parse_bool_env("OFFLINE_MODE", "False")
         
-        # Set models directory based on availability
-        self._setup_models_dir()
+        # Container environment detection
+        self.is_container = is_container_environment()
     
     def _parse_allowed_origins(self, origins_str):
         """Parse comma-separated string into list of origins"""

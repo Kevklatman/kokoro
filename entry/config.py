@@ -51,7 +51,6 @@ class Settings:
         
         # Models
         self.models_dir = get_models_directory()
-        self.models_dir_path = build_path(os.getcwd(), self.models_dir)
         self.cuda_available = parse_bool_env("CUDA_AVAILABLE", "True")
         
         # Hugging Face
@@ -60,7 +59,7 @@ class Settings:
         
         # Container environment detection
         self.is_container = is_container_environment()
-    
+
     def _parse_allowed_origins(self, origins_str):
         """Parse comma-separated string into list of origins"""
         if not origins_str:

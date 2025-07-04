@@ -16,8 +16,8 @@ from entry.core.tts import (
 )
 from entry.core.models import get_settings
 from entry.utils.audio import (
-    audio_to_base64, create_wav_response, create_audio_response, 
-    optimize_response_size, audio_to_bytes, ensure_audio_array,
+    audio_to_base64, create_audio_response, 
+    audio_to_bytes, ensure_audio_array,
     encode_audio_base64, format_quality_info, normalize_audio_data,
     validate_audio_format, validate_audio_quality, encode_audio_to_format,
     optimize_audio_size

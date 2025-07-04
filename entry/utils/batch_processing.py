@@ -3,6 +3,7 @@ Batch processing utilities for handling multiple items efficiently.
 """
 from typing import List, Tuple, Any, Callable, Optional
 from loguru import logger
+from entry.utils.list_utils import safe_list_append, safe_list_extend
 
 
 def categorize_items(
@@ -27,7 +28,7 @@ def categorize_items(
         try:
             category = category_func(item)
             if category in categorized:
-                categorized[category].append((i, item))
+                safe_list_append(categorized[category], (i, item))
             else:
                 logger.warning(f"Unknown category '{category}' for item {i}")
         except Exception as e:
@@ -61,7 +62,7 @@ def process_batch_items(
     for i, item in enumerate(items):
         try:
             result = processor_func(item)
-            results.append(result)
+            safe_list_append(results, result)
             logger.debug(f"✅ Processed {batch_name} {i+1}/{len(items)}")
         except Exception as e:
             logger.error(f"❌ Failed to process {batch_name} {i+1}: {str(e)}")
@@ -69,9 +70,9 @@ def process_batch_items(
             if error_handling == "fail":
                 raise
             elif error_handling == "return_none":
-                results.append(None)
+                safe_list_append(results, None)
             elif error_handling == "skip":
-                results.append(None)
+                safe_list_append(results, None)
     
     success_count = sum(1 for r in results if r is not None)
     logger.info(f"✅ Completed {batch_name} processing: {success_count}/{len(items)} successful")
@@ -226,11 +227,11 @@ def parallel_process_batch(
             chunk_index = future_to_chunk[future]
             try:
                 chunk_results = future.result()
-                all_results.extend(chunk_results)
+                safe_list_extend(all_results, chunk_results)
                 logger.info(f"✅ Completed chunk {chunk_index + 1}/{len(chunks)}")
             except Exception as e:
                 logger.error(f"❌ Chunk {chunk_index + 1} failed: {str(e)}")
                 # Add None results for failed chunk
-                all_results.extend([None] * len(chunks[chunk_index]))
+                safe_list_extend(all_results, [None] * len(chunks[chunk_index]))
     
     return all_results 

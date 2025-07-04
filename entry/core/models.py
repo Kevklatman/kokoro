@@ -25,9 +25,10 @@ from kokoro.model import KModel
 from kokoro.pipeline import KPipeline
 from entry.utils.file_utils import (
     safe_file_exists, safe_directory_exists, ensure_directory_exists,
-    build_path, list_directory_contents
+    list_directory_contents
 )
-from entry.utils.string_utils import format_list_for_display
+from entry.utils.string_utils import format_list_for_display, build_path
+from entry.utils.dict_utils import safe_dict_clear, safe_dict_update
 
 # Global model storage - will be populated during initialization
 models = {}
@@ -255,9 +256,7 @@ def initialize_models(force_online=False):
             default_model = model  # Store as default model
             
             # Clear any existing data and start fresh
-            models.clear()
-            pipelines.clear()
-            VOICES.clear()
+            safe_dict_clear([models, pipelines, VOICES])
             
             # Add models (ensure both CPU and GPU models exist)
             models['standard'] = model
@@ -280,12 +279,12 @@ def initialize_models(force_online=False):
             
             # Step 3: Initialize pipelines
             local_pipelines = setup_pipelines(model, settings.models_dir)
-            pipelines.update(local_pipelines)
+            safe_dict_update(pipelines, local_pipelines)
             logger.info(f"Initialized pipelines: {list(pipelines.keys())}")
             
             # Step 4: Load voices
             available_voices = load_voice_packs(settings.models_dir)
-            VOICES.update(available_voices)
+            safe_dict_update(VOICES, available_voices)
             logger.info(f"Loaded {len(VOICES)} voices successfully: {', '.join(sorted(VOICES))}")
             
             # Ensure critical voices are available
@@ -326,7 +325,7 @@ def get_pipelines():
                 logger.warning("Attempting to recover pipelines")
                 settings = get_settings()
                 new_pipelines = setup_pipelines(default_model, settings.models_dir)
-                pipelines.update(new_pipelines)
+                safe_dict_update(pipelines, new_pipelines)
             except Exception as e:
                 logger.error(f"Pipeline recovery failed: {str(e)}")
     return pipelines

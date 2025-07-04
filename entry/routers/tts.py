@@ -30,6 +30,8 @@ from entry.utils.batch_processing import (
     categorize_items, process_batch_items, merge_batch_results,
     validate_batch_request, create_batch_response
 )
+from entry.utils.dict_utils import extract_dict_values, safe_dict_get
+from entry.utils.list_utils import extend_list_to_length, safe_list_append
 from loguru import logger
 
 router = APIRouter()
@@ -106,20 +108,24 @@ async def batch_text_to_speech(request: Request):
         if not is_valid:
             raise create_validation_error(error_msg)
         
-        # Extract parameters
-        voice = request_data.get("voice", "af_sky")
-        speed = request_data.get("speed", 1.0)
-        breathiness = request_data.get("breathiness", 0.0)
-        tenseness = request_data.get("tenseness", 0.0)
-        jitter = request_data.get("jitter", 0.0)
-        sultry = request_data.get("sultry", 0.0)
-        fiction_list = request_data.get("fiction", [False] * len(texts))
-        quality = request_data.get("quality", "medium")
-        format_type = request_data.get("format", "mp3")
+        # Extract parameters using dictionary utilities
+        param_keys = ["voice", "speed", "breathiness", "tenseness", "jitter", "sultry", "quality", "format"]
+        param_defaults = ["af_sky", 1.0, 0.0, 0.0, 0.0, 0.0, "medium", "mp3"]
+        params = extract_dict_values(request_data, param_keys, param_defaults)
+        
+        voice = params["voice"]
+        speed = params["speed"]
+        breathiness = params["breathiness"]
+        tenseness = params["tenseness"]
+        jitter = params["jitter"]
+        sultry = params["sultry"]
+        quality = params["quality"]
+        format_type = params["format"]
+        
+        fiction_list = safe_dict_get(request_data, "fiction", [False] * len(texts))
         
         # Ensure fiction_list matches texts length
-        if len(fiction_list) < len(texts):
-            fiction_list.extend([False] * (len(texts) - len(fiction_list)))
+        extend_list_to_length(fiction_list, len(texts), False)
         
         log_operation_start("batch TTS", count=len(texts), voice=voice)
         
@@ -183,16 +189,16 @@ async def batch_text_to_speech(request: Request):
         audio_base64_list = []
         for i, result in enumerate(all_results):
             if result is None:
-                audio_base64_list.append("")
+                safe_list_append(audio_base64_list, "")
                 continue
             
             try:
                 sample_rate, audio_data = result
                 encoded_audio = audio_to_base64(audio_data, format_type, quality)
-                audio_base64_list.append(encoded_audio)
+                safe_list_append(audio_base64_list, encoded_audio)
             except Exception as e:
                 logger.error(f"Error encoding audio for index {i}: {str(e)}")
-                audio_base64_list.append("")
+                safe_list_append(audio_base64_list, "")
         
         response = create_batch_response(
             results=audio_base64_list,

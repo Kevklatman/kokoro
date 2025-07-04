@@ -12,6 +12,7 @@ import torch
 from entry.utils.error_handling import (
     safe_execute, handle_http_error, log_operation_start, log_operation_success, log_operation_failure
 )
+from entry.utils.dict_utils import safe_dict_update
 
 router = APIRouter(
     prefix="/debug",
@@ -79,11 +80,12 @@ async def debug_tts_pipeline(request: DebugTTSRequest) -> DebugResponse:
         
         # Get memory info if CUDA is available
         if cuda_available:
-            system_info.update({
+            memory_info = {
                 "cuda_memory_allocated": f"{torch.cuda.memory_allocated() / 1024**3:.2f}GB",
                 "cuda_memory_reserved": f"{torch.cuda.memory_reserved() / 1024**3:.2f}GB",
                 "cuda_memory_cached": f"{torch.cuda.memory_reserved() / 1024**3:.2f}GB"
-            })
+            }
+            safe_dict_update(system_info, memory_info)
         
         return DebugResponse(
             success=True,
@@ -125,14 +127,15 @@ async def get_gpu_info():
         }
         
         if cuda_available:
-            gpu_info.update({
+            cuda_info = {
                 "device_count": torch.cuda.device_count(),
                 "current_device": torch.cuda.current_device(),
                 "device_name": torch.cuda.get_device_name(0),
                 "memory_allocated_gb": torch.cuda.memory_allocated() / 1024**3,
                 "memory_reserved_gb": torch.cuda.memory_reserved() / 1024**3,
                 "memory_cached_gb": torch.cuda.memory_reserved() / 1024**3
-            })
+            }
+            safe_dict_update(gpu_info, cuda_info)
         
         return gpu_info
     

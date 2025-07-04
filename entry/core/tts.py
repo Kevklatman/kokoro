@@ -12,6 +12,8 @@ from entry.core.models import (
 )
 from entry.audio_effects import apply_emotion_effects
 from entry.config import get_settings
+from entry.utils.dict_utils import extract_dict_values
+from entry.utils.list_utils import safe_list_append, safe_list_extend
 
 
 def is_gpu_available() -> bool:
@@ -92,13 +94,10 @@ def select_voice_and_preset(
     
     if preset_name and preset_name in voice_presets:
         preset = voice_presets[preset_name]
-        return preset['voice'], {
-            'speed': preset.get('speed', 1.0),
-            'breathiness': preset.get('breathiness', 0.0),
-            'tenseness': preset.get('tenseness', 0.0),
-            'jitter': preset.get('jitter', 0.0),
-            'sultry': preset.get('sultry', 0.0)
-        }
+        param_keys = ['speed', 'breathiness', 'tenseness', 'jitter', 'sultry']
+        param_defaults = [1.0, 0.0, 0.0, 0.0, 0.0]
+        emotion_params = extract_dict_values(preset, param_keys, param_defaults)
+        return preset['voice'], emotion_params
     
     if requested_voice:
         return requested_voice, None
@@ -239,7 +238,7 @@ def generate_audio_batch(
             unique_texts[text] = []
             # Process unique text once
             for _, ps, _ in pipeline(text, voice, speed):
-                unique_texts[text].append((ps, pack[len(ps)-1]))
+                safe_list_append(unique_texts[text], (ps, pack[len(ps)-1]))
         text_to_index[i] = text
     
     # Build batch from deduplicated results
@@ -250,9 +249,9 @@ def generate_audio_batch(
     for i, text in enumerate(texts):
         cached_results = unique_texts[text]
         for ps, ref_s in cached_results:
-            batch_ps.append(ps)
-            batch_ref_s.append(ref_s)
-            result_mapping.append(i)  # Track original text index
+            safe_list_append(batch_ps, ps)
+            safe_list_append(batch_ref_s, ref_s)
+            safe_list_append(result_mapping, i)  # Track original text index
     
     if not batch_ps:
         return []
@@ -277,7 +276,7 @@ def generate_audio_batch(
     results = []
     for idx, audio in enumerate(audio_batch):
         audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)
-        results.append(((24000, audio), batch_ps[idx]))
+        safe_list_append(results, ((24000, audio), batch_ps[idx]))
     
     return results
 
@@ -296,5 +295,5 @@ def tokenize_text(text: str, voice: str = 'af_sky') -> str:
     pipeline = pipelines[voice[0]]
     result_phonemes = []
     for _, ps, _ in pipeline(text, voice):
-        result_phonemes.append(ps)
+        safe_list_append(result_phonemes, ps)
     return '\n'.join(result_phonemes)

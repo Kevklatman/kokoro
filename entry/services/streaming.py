@@ -1,5 +1,5 @@
 """
-HLS streaming service for real-time TTS audio delivery
+Streaming audio generation for HLS (HTTP Live Streaming)
 """
 import os
 import io
@@ -8,8 +8,10 @@ import asyncio
 import numpy as np
 from typing import Optional
 from starlette.concurrency import run_in_threadpool
+from loguru import logger
 
 from entry.core.tts import select_voice_and_preset, preprocess_text, generate_audio
+from entry.services.responses import StreamResponse
 
 
 async def create_stream(
@@ -134,11 +136,11 @@ async def generate_streaming_audio(
         with open(f"{stream_dir}/playlist.m3u8", "a") as f:
             f.write("#EXT-X-ENDLIST\n")
             
-        print(f"✅ Completed streaming audio generation for {stream_id}")
+        logger.info(f"✅ Completed streaming audio generation for {stream_id}")
     except Exception as e:
-        print(f"❌ Error generating streaming audio: {str(e)}")
+        logger.error(f"❌ Error generating streaming audio: {str(e)}")
         import traceback
-        print(f"❌ Traceback: {traceback.format_exc()}")
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
 
 
 def get_stream_file_path(stream_id: str, file_name: str) -> str:
@@ -160,7 +162,7 @@ def read_stream_file(stream_id: str, file_name: str) -> bytes:
 
 
 def read_stream_playlist(stream_id: str, file_name: str) -> str:
-    """Read a stream playlist file and return its contents as text"""
+    """Read playlist file content"""
     file_path = get_stream_file_path(stream_id, file_name)
     with open(file_path, "r") as f:
         return f.read()

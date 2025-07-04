@@ -15,7 +15,10 @@ from entry.core.tts import (
     preprocess_text, select_voice_and_preset
 )
 from entry.core.models import get_settings
-from entry.utils.audio import audio_to_base64, create_wav_response, create_audio_response, optimize_response_size, audio_to_bytes
+from entry.utils.audio import (
+    audio_to_base64, create_wav_response, create_audio_response, 
+    optimize_response_size, audio_to_bytes, ensure_audio_array
+)
 from loguru import logger
 
 router = APIRouter()
@@ -188,17 +191,7 @@ async def batch_text_to_speech(request: Request):
                                 
                                 # Ensure audio_data is a numpy array
                                 if not isinstance(audio_data, np.ndarray):
-                                    logger.warning(f"Fiction audio data is not a numpy array: {type(audio_data)}, attempting conversion")
-                                    try:
-                                        # Try to convert to numpy array if it's not already
-                                        if isinstance(audio_data, list):
-                                            audio_data = np.array(audio_data, dtype=np.float32)
-                                        elif isinstance(audio_data, str):
-                                            # If it's a string, we can't convert it to audio data
-                                            audio_data = np.zeros(1000, dtype=np.float32)
-                                    except Exception as conv_err:
-                                        logger.error(f"Failed to convert fiction audio data: {str(conv_err)}")
-                                        audio_data = np.zeros(1000, dtype=np.float32)
+                                    audio_data = ensure_audio_array(audio_data)
                                 
                                 results[idx] = (sample_rate, audio_data)
                             else:
@@ -260,19 +253,7 @@ async def batch_text_to_speech(request: Request):
                                 
                                 # Ensure audio_data is a numpy array
                                 if not isinstance(audio_data, np.ndarray):
-                                    logger.warning(f"Audio data is not a numpy array: {type(audio_data)}, attempting conversion")
-                                    try:
-                                        # Try to convert to numpy array if it's not already
-                                        if isinstance(audio_data, list):
-                                            audio_data = np.array(audio_data, dtype=np.float32)
-                                        elif isinstance(audio_data, str):
-                                            # If it's a string, we can't convert it to audio data
-                                            # Use a small silent audio segment instead
-                                            logger.warning(f"Audio data is a string, using silent audio instead")
-                                            audio_data = np.zeros(1000, dtype=np.float32)
-                                    except Exception as conv_err:
-                                        logger.error(f"Failed to convert audio data: {str(conv_err)}")
-                                        audio_data = np.zeros(1000, dtype=np.float32)
+                                    audio_data = ensure_audio_array(audio_data)
                                 
                                 results[idx] = (sample_rate, audio_data)
                             else:

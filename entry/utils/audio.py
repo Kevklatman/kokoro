@@ -15,6 +15,36 @@ logger = logging.getLogger(__name__)
 AudioFormat = Literal['wav', 'mp3']
 
 
+def ensure_audio_array(audio_data, fallback_length: int = 1000) -> np.ndarray:
+    """Ensure audio_data is a numpy array, with fallback to silent audio if conversion fails"""
+    if isinstance(audio_data, np.ndarray):
+        return audio_data
+    
+    try:
+        return np.array(audio_data, dtype=np.float32)
+    except Exception:
+        return np.zeros(fallback_length, dtype=np.float32)
+
+
+def normalize_audio_for_wav(audio_data: np.ndarray, bit_depth: int = 16) -> np.ndarray:
+    """Normalize audio data for WAV format with specified bit depth"""
+    # Clip to valid range
+    scaled = np.clip(audio_data, -1.0, 1.0)
+    
+    if bit_depth == 8:
+        # Add dither for 8-bit
+        dither = np.random.uniform(-0.5, 0.5, size=scaled.shape) / 127.0
+        scaled = scaled + dither
+        scaled = np.clip(scaled, -1.0, 1.0)  # Re-clip after adding dither
+        return (scaled * 127 + 128).astype(np.uint8)
+    else:  # 16-bit
+        # Add dither for 16-bit
+        dither = np.random.uniform(-0.5, 0.5, size=scaled.shape) / 32767.0
+        scaled = scaled + dither
+        scaled = np.clip(scaled, -1.0, 1.0)  # Re-clip after adding dither
+        return (scaled * 32767).astype(np.int16)
+
+
 def audio_to_wav_bytes(audio_data: np.ndarray, sample_rate: int = 24000, quality: str = 'high') -> bytes:
     """Convert audio data to WAV format bytes with optional quality reduction
     
@@ -28,6 +58,9 @@ def audio_to_wav_bytes(audio_data: np.ndarray, sample_rate: int = 24000, quality
     """
     audio_buffer = io.BytesIO()
     channels = 1
+    
+    # Ensure audio_data is a numpy array
+    audio_data = ensure_audio_array(audio_data)
     
     # Adjust sample rate and bit depth based on quality
     if quality == 'low':
@@ -51,30 +84,17 @@ def audio_to_wav_bytes(audio_data: np.ndarray, sample_rate: int = 24000, quality
     original_size = len(audio_data) * (2 if quality == 'high' else (2 if quality == 'medium' else 1))
     logger.info(f"Audio quality: {quality}, estimated size: {original_size/1024:.1f}KB")
     
+    # Normalize audio for WAV format
+    audio_array = normalize_audio_for_wav(audio_data, bit_depth=8 if sampwidth == 1 else 16)
+    
+    # Write WAV file
     with wave.open(audio_buffer, 'wb') as wav_file:
         wav_file.setnchannels(channels)
         wav_file.setsampwidth(sampwidth)
         wav_file.setframerate(sample_rate)
-        
-        # Scale and convert to appropriate bit depth with dithering to reduce quantization noise
-        scaled = np.clip(audio_data, -1.0, 1.0)
-        if sampwidth == 1:  # 8-bit
-            # Add small amount of dither noise before quantizing to reduce quantization artifacts
-            dither = np.random.uniform(-0.5, 0.5, size=scaled.shape) / 127.0
-            scaled = scaled + dither
-            scaled = np.clip(scaled, -1.0, 1.0)  # Re-clip after adding dither
-            scaled = (scaled * 127 + 128).astype(np.uint8)
-        else:  # 16-bit
-            # Add smaller amount of dither for 16-bit (less noticeable)
-            dither = np.random.uniform(-0.5, 0.5, size=scaled.shape) / 32767.0
-            scaled = scaled + dither
-            scaled = np.clip(scaled, -1.0, 1.0)  # Re-clip after adding dither
-            scaled = (scaled * 32767).astype(np.int16)
-        
-        wav_file.writeframes(scaled.tobytes())
+        wav_file.writeframes(audio_array.tobytes())
     
-    audio_buffer.seek(0)
-    return audio_buffer.read()
+    return audio_buffer.getvalue()
 
 
 def _downsample(audio_data: np.ndarray, original_rate: int, target_rate: int) -> np.ndarray:

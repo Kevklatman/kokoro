@@ -27,83 +27,73 @@ def process_queue():
     """Background thread that processes the job queue"""
     while True:
         try:
+            # Get job from queue with timeout
             job: TTSJob = job_queue.get(timeout=1)
-            job_id = job.id
-            if job_id in jobs_storage:
-                jobs_storage[job_id].status = JobStatusEnum.PROCESSING
-                jobs_storage[job_id].started_at = datetime.now()
-                processing_jobs[job_id] = jobs_storage[job_id]
-                print(f"🔄 Processing job {job_id}: {job.title}")
-                
-                try:
-                    selected_voice, emotion_preset = select_voice_and_preset(
-                        job.voice, None, job.fiction
-                    )
-                    
-                    # Apply preset values if available
-                    if emotion_preset:
-                        speed = emotion_preset.get("speed", job.speed) if job.speed == 1.0 else job.speed
-                        breathiness = emotion_preset.get("breathiness", job.breathiness) if job.breathiness == 0.0 else job.breathiness
-                        tenseness = emotion_preset.get("tenseness", job.tenseness) if job.tenseness == 0.0 else job.tenseness
-                        jitter = emotion_preset.get("jitter", job.jitter) if job.jitter == 0.0 else job.jitter
-                        sultry = emotion_preset.get("sultry", job.sultry) if job.sultry == 0.0 else job.sultry
-                    else:
-                        speed = job.speed
-                        breathiness = job.breathiness
-                        tenseness = job.tenseness
-                        jitter = job.jitter
-                        sultry = job.sultry
-                    
-                    preprocessed_text = preprocess_text(job.text)
-                    (sample_rate, audio_data), phonemes = generate_audio(
-                        preprocessed_text,
-                        selected_voice,
-                        speed,
-                        job.use_gpu,
-                        breathiness,
-                        tenseness,
-                        jitter,
-                        sultry
-                    )
-                    
-                    if audio_data is None:
-                        raise Exception("Failed to generate audio")
-                    
-                    # Get quality and format parameters with defaults for jobs
-                    # Jobs can be long, so we use medium quality and MP3 by default
-                    quality = getattr(job, 'quality', 'medium') if hasattr(job, 'quality') else 'medium'
-                    format = getattr(job, 'format', 'mp3') if hasattr(job, 'format') else 'mp3'
-                    
-                    if quality == 'auto':
-                        # For background jobs, use medium quality by default
-                        quality = 'medium'
-                    
-                    # Default to MP3 for jobs to save space
-                    if format == 'auto':
-                        format = 'mp3'
-                        
-                    logger.info(f"Processing job {job_id} with quality {quality}, format {format}")
-                    
-                    # Use our optimized audio_to_base64 utility
-                    audio_base64 = audio_to_base64(audio_data, sample_rate, quality=quality, format=format)
-                    
-                    jobs_storage[job_id].status = JobStatusEnum.COMPLETED
-                    jobs_storage[job_id].completed_at = datetime.now()
-                    jobs_storage[job_id].audio_base64 = audio_base64
-                    print(f"✅ Completed job {job_id}: {job.title}")
-                    
-                except Exception as e:
-                    jobs_storage[job_id].status = JobStatusEnum.FAILED
-                    jobs_storage[job_id].error_message = str(e)
-                    print(f"❌ Failed job {job_id}: {str(e)}")
-                finally:
-                    if job_id in processing_jobs:
-                        del processing_jobs[job_id]
-                    job_queue.task_done()
+            
+            # Update job status to processing
+            job.status = JobStatusEnum.PROCESSING
+            job.started_at = datetime.now()
+            
+            logger.info(f"🔄 Processing job {job.id}: {job.title}")
+            
+            # Extract parameters
+            text = job.text
+            voice = job.voice
+            speed = job.speed
+            quality = job.quality
+            format = job.format
+            breathiness = job.breathiness
+            tenseness = job.tenseness
+            jitter = job.jitter
+            sultry = job.sultry
+            
+            # Generate audio
+            logger.info(f"Processing job {job.id} with quality {quality}, format {format}")
+            
+            # Use the core TTS function
+            result = generate_audio(
+                text=text,
+                voice=voice,
+                speed=speed,
+                use_gpu=True,  # Use GPU for background processing
+                breathiness=breathiness,
+                tenseness=tenseness,
+                jitter=jitter,
+                sultry=sultry
+            )
+            
+            if result is None:
+                raise Exception("Audio generation returned None")
+            
+            sample_rate, audio_data = result
+            
+            # Use our optimized audio_to_base64 utility
+            audio_base64 = audio_to_base64(audio_data, sample_rate, quality=quality, format=format)
+            
+            # Update job with results
+            job.status = JobStatusEnum.COMPLETED
+            job.completed_at = datetime.now()
+            job.result = audio_base64
+            
+            logger.info(f"✅ Completed job {job.id}: {job.title}")
+            
+            # Mark task as done
+            job_queue.task_done()
+            
         except queue.Empty:
+            # No jobs in queue, continue
             continue
         except Exception as e:
-            print(f"❌ Queue processor error: {str(e)}")
+            logger.error(f"❌ Failed job {job.id}: {str(e)}")
+            # Update job status to failed
+            if 'job' in locals():
+                job.status = JobStatusEnum.FAILED
+                job.completed_at = datetime.now()
+                job.error = str(e)
+            continue
+        except Exception as e:
+            logger.error(f"❌ Queue processor error: {str(e)}")
+            continue
 
 
 def start_queue_processor():
@@ -117,38 +107,37 @@ def submit_job(job_request) -> str:
     """Submit a new job to the queue"""
     job_id = str(uuid.uuid4())
     
-    # Create TTSJob from TTSJobRequest
+    # Create job object
     job_data = TTSJob(
         id=job_id,
+        title=job_request.title,
+        author=job_request.author,
+        genre=job_request.genre,
         text=job_request.text,
         voice=job_request.voice,
         speed=job_request.speed,
-        use_gpu=job_request.use_gpu,
+        quality=job_request.quality,
+        format=job_request.format,
         breathiness=job_request.breathiness,
         tenseness=job_request.tenseness,
         jitter=job_request.jitter,
         sultry=job_request.sultry,
         fiction=job_request.fiction,
-        title=job_request.title,
-        author=job_request.author,
-        genre=job_request.genre
-    )
-    
-    job_status = JobStatus(
-        job_id=job_id,
+        use_gpu=job_request.use_gpu,
         status=JobStatusEnum.QUEUED,
-        title=job_request.title,
-        author=job_request.author,
-        genre=job_request.genre,
-        total_in_queue=job_queue.qsize() + 1,
-        created_at=datetime.now()
+        created_at=datetime.now(),
+        position_in_queue=job_queue.qsize() + 1,
+        total_in_queue=job_queue.qsize() + 1
     )
     
-    jobs_storage[job_id] = job_status
+    # Store job
+    jobs_storage[job_id] = job_data
+    
+    # Add to queue
     job_queue.put(job_data)
     
-    print(f"📋 Queued job {job_id}: {job_request.title}")
-    print(f"📊 Queue size now: {job_queue.qsize()}")
+    logger.info(f"📋 Queued job {job_id}: {job_request.title}")
+    logger.info(f"📊 Queue size now: {job_queue.qsize()}")
     
     return job_id
 
@@ -156,12 +145,14 @@ def submit_job(job_request) -> str:
 def get_job_status(job_id: str) -> JobStatus:
     """Get status of a specific job"""
     if job_id not in jobs_storage:
-        raise ValueError("Job not found")
+        raise ValueError(f"Job {job_id} not found")
     
     job_status = jobs_storage[job_id]
+    
+    # Update queue position if job is still queued
     if job_status.status == JobStatusEnum.QUEUED:
         job_status.position_in_queue = max(1, job_queue.qsize())
-    job_status.total_in_queue = len(jobs_storage)
+        job_status.total_in_queue = len(jobs_storage)
     
     return job_status
 
@@ -169,18 +160,18 @@ def get_job_status(job_id: str) -> JobStatus:
 def get_queue_status():
     """Get overall queue status"""
     queued_count = sum(1 for job in jobs_storage.values() if job.status == JobStatusEnum.QUEUED)
-    processing_count = len(processing_jobs)
+    processing_count = sum(1 for job in jobs_storage.values() if job.status == JobStatusEnum.PROCESSING)
     
-    print(f"📊 Queue status requested:")
-    print(f"  Total jobs: {len(jobs_storage)}")
-    print(f"  Processing: {processing_count}")
-    print(f"  Queued: {queued_count}")
+    logger.info(f"📊 Queue status requested:")
+    logger.info(f"  Total jobs: {len(jobs_storage)}")
+    logger.info(f"  Processing: {processing_count}")
+    logger.info(f"  Queued: {queued_count}")
     
     return {
         "total_jobs": len(jobs_storage),
         "processing_jobs": processing_count,
         "queued_jobs": queued_count,
-        "jobs": list(jobs_storage.values())
+        "queue_size": job_queue.qsize()
     }
 
 

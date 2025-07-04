@@ -351,55 +351,35 @@ async def batch_text_to_speech(request: Request):
                     audio_base64_list.append("")
                     continue
                 
-                # Debug: log the result structure before unpacking
-                logger.info(f"Result {i} structure: type={type(result)}, length={len(result)}, content types: {[type(x) for x in result]}")
-                
+                # Fast path: extract sample_rate and audio_data
                 try:
                     sample_rate, audio_data = result
-                    logger.info(f"Unpacked result {i}: sample_rate={sample_rate} (type: {type(sample_rate)}), audio_data shape: {audio_data.shape if hasattr(audio_data, 'shape') else 'no shape attr'} (type: {type(audio_data)})")
-                except ValueError as e:
-                    logger.error(f"Failed to unpack result {i}: {e}, result: {result}")
+                except ValueError:
                     audio_base64_list.append("")
                     continue
                 
-                # Validate sample_rate - handle case where it might be a tuple itself
-                if isinstance(sample_rate, tuple):
-                    logger.warning(f"Sample rate is a tuple: {sample_rate}, extracting first element")
-                    if len(sample_rate) > 0 and isinstance(sample_rate[0], int):
-                        actual_sample_rate = sample_rate[0]
-                        # The audio_data might be in sample_rate[1]
-                        if len(sample_rate) > 1:
-                            audio_data = sample_rate[1]
-                    else:
-                        logger.error(f"Cannot extract valid sample rate from tuple: {sample_rate}")
-                        audio_base64_list.append("")
-                        continue
+                # Quick sample_rate validation and extraction
+                if isinstance(sample_rate, tuple) and len(sample_rate) >= 2:
+                    actual_sample_rate = sample_rate[0] if isinstance(sample_rate[0], int) else 24000
+                    audio_data = sample_rate[1]
                 elif isinstance(sample_rate, int) and sample_rate > 0:
                     actual_sample_rate = sample_rate
                 else:
-                    logger.warning(f"Invalid sample rate {sample_rate} (type: {type(sample_rate)}) for result {i}, using default 24000")
                     actual_sample_rate = 24000
                 
-                # Validate audio_data
+                # Quick audio_data validation
                 if not isinstance(audio_data, np.ndarray):
-                    logger.warning(f"Audio data for result {i} is not a numpy array: {type(audio_data)}, content: {audio_data}")
                     audio_base64_list.append("")
                     continue
-                
-                logger.info(f"Encoding audio {i} with sample rate {actual_sample_rate}, shape {audio_data.shape}")
                 # Convert audio data to specified format
                 if format_type == "mp3":
                     encoded_audio = audio_to_base64(audio_data, actual_sample_rate, quality=quality, format='mp3')
                 else:  # Default to WAV
                     encoded_audio = audio_to_base64(audio_data, actual_sample_rate, quality=quality, format='wav')
                 
-                logger.info(f"Successfully encoded audio {i}, length: {len(encoded_audio)}")
                 audio_base64_list.append(encoded_audio)
-            except Exception as e:
-                logger.error(f"Error encoding audio {i}: {str(e)}")
+            except Exception:
                 audio_base64_list.append("")
-        
-        logger.info(f"Returning batch response with {len(audio_base64_list)} audio items")
         
         # If no texts were provided or all processing failed
         if not audio_base64_list:

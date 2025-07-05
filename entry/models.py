@@ -104,6 +104,15 @@ class TTSJob(BaseModel):
     title: str = "Untitled"
     author: str = "Unknown Author"
     genre: str = "non-fiction"
+    # Job status fields
+    status: JobStatusEnum = JobStatusEnum.QUEUED
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    position_in_queue: Optional[int] = None
+    total_in_queue: Optional[int] = None
+    error: Optional[str] = None
+    result: Optional[str] = None
 
 
 class JobResponse(BaseModel):

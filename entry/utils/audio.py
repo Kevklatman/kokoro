@@ -242,22 +242,30 @@ def normalize_audio_data(audio_data: np.ndarray, target_sample_rate: int = 24000
 
 def validate_audio_format(format_name: str) -> str:
     """Validate and normalize audio format name"""
-    valid_formats = ['wav', 'mp3', 'flac', 'ogg']
+    valid_formats = ['wav', 'mp3', 'flac', 'ogg', 'auto']
     format_lower = normalize_string_case(format_name, "lower")
     
     if format_lower not in valid_formats:
         raise ValueError(f"Unsupported audio format: {format_name}. Supported: {valid_formats}")
+    
+    # Map 'auto' to 'wav' as default
+    if format_lower == 'auto':
+        return 'wav'
     
     return format_lower
 
 
 def validate_audio_quality(quality: str) -> str:
     """Validate and normalize audio quality setting"""
-    valid_qualities = ['low', 'medium', 'high']
+    valid_qualities = ['low', 'medium', 'high', 'auto']
     quality_lower = normalize_string_case(quality, "lower")
     
     if quality_lower not in valid_qualities:
         raise ValueError(f"Unsupported audio quality: {quality}. Supported: {valid_qualities}")
+    
+    # Map 'auto' to 'high' as default
+    if quality_lower == 'auto':
+        return 'high'
     
     return quality_lower
 

@@ -57,12 +57,13 @@ async def submit_tts_job(job_request: TTSJobRequest):
 
 
 @router.get("/status/{job_id}", response_model=JobStatus)
-async def get_job_status(job_id: str):
+async def get_job_status_endpoint(job_id: str):
     """Get the status of a specific job"""
     log_operation_start("job status check", job_id=job_id)
     
     def get_status_safe():
-        job_status = get_job_status(job_id)
+        from entry.services.queue import get_job_status as get_job_status_from_queue
+        job_status = get_job_status_from_queue(job_id)
         if job_status is None:
             raise create_not_found_error(job_id, "Job")
         return job_status
@@ -84,7 +85,8 @@ async def get_queue_status():
     log_operation_start("queue status check")
     
     def get_queue_status_safe():
-        return get_queue_status_info()
+        from entry.services.queue import get_queue_status as get_queue_status_from_service
+        return get_queue_status_from_service()
     
     try:
         result = safe_execute(get_queue_status_safe, context="queue status check")

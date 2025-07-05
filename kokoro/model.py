@@ -107,7 +107,9 @@ class KModel(torch.nn.Module):
             # Use SafeModelLoader context manager to temporarily use our safe loader
             with SafeModelLoader():
                 logger.info(f"Loading model from {model} with safe loading mechanisms")
-                model_data = torch.load(model, map_location='cpu')
+                # Import load_model_safely here to avoid circular imports
+                from kokoro.model_loader import load_model_safely
+                model_data = load_model_safely(model, map_location='cpu')
                 logger.info("Successfully loaded model")
         except Exception as e:
             logger.error(f"Failed to load model with safe loader: {str(e)}")

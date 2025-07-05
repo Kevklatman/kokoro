@@ -173,13 +173,13 @@ try:
     if entry_core_models_available and kokoro_model_available:
         models_loaded = True
         try:
-            # Check if we can access the model initialization function
-            if hasattr(sys.modules.get("entry.core.models", None), "safe_load_model"):
+            # Check if we can access the model loading functions
+            if hasattr(sys.modules.get("kokoro.model_loader", None), "load_model_safely"):
                 kokoro_loaded = True
             else:
-                print("safe_load_model not found in entry.core.models")
+                print("load_model_safely not found in kokoro.model_loader")
         except Exception as e:
-            print(f"Could not check for safe_load_model: {e}")
+            print(f"Could not check for load_model_safely: {e}")
             kokoro_loaded = False
 except Exception as e:
     print(f"Could not import model modules: {e}")
@@ -250,7 +250,23 @@ def main():
     # Check for model-specific files
     print("\nChecking Kokoro model files:")
     kokoro_config = check_file_exists(kokoro_dir / "config.json")
-    kokoro_model = check_file_exists(kokoro_dir / "kokoro-v1_0.pth")
+    
+    # Check for model file in the Hugging Face cache structure
+    kokoro_model = False
+    hf_cache_dir = kokoro_dir / "models--hexgrad--Kokoro-82M"
+    if hf_cache_dir.exists():
+        snapshots_dir = hf_cache_dir / "snapshots"
+        if snapshots_dir.exists():
+            for snapshot in snapshots_dir.iterdir():
+                if snapshot.is_dir():
+                    model_file = snapshot / "kokoro-v1_0.pth"
+                    if model_file.exists():
+                        kokoro_model = True
+                        print(f"✓ Found model file: {model_file}")
+                        break
+    
+    if not kokoro_model:
+        print("✗ kokoro-v1_0.pth: Not found in expected locations")
     
     # Check model file size and integrity
     if kokoro_model:
@@ -300,14 +316,27 @@ def main():
     # Check if we can load models using the KModel multi-stage approach
     safe_loader_check = False
     try:
-        if models_loaded and os.path.exists(kokoro_dir / "kokoro-v1_0.pth"):
+        # Find the actual model file path
+        model_file_path = None
+        hf_cache_dir = kokoro_dir / "models--hexgrad--Kokoro-82M"
+        if hf_cache_dir.exists():
+            snapshots_dir = hf_cache_dir / "snapshots"
+            if snapshots_dir.exists():
+                for snapshot in snapshots_dir.iterdir():
+                    if snapshot.is_dir():
+                        potential_path = snapshot / "kokoro-v1_0.pth"
+                        if potential_path.exists():
+                            model_file_path = potential_path
+                            break
+        
+        if models_loaded and model_file_path and os.path.exists(model_file_path):
             print("Attempting to verify model loading...")
             try:
                 # Try multiple approaches to load the model file
-                # First try using our safe_load_model if available
-                if hasattr(sys.modules.get("entry.core.models", {}), "safe_load_model"):
-                    from entry.core.models import safe_load_model
-                    _ = safe_load_model(kokoro_dir / "kokoro-v1_0.pth", map_location='cpu')
+                # First try using our load_model_safely if available
+                if hasattr(sys.modules.get("kokoro.model_loader", {}), "load_model_safely"):
+                    from kokoro.model_loader import load_model_safely
+                    _ = load_model_safely(str(model_file_path), map_location='cpu')
                     safe_loader_check = True
                     print("✓ Safe model loader works correctly")
                 # Also try the multi-stage approach from KModel
@@ -322,7 +351,7 @@ def main():
                     ]):
                         try:
                             print(f"Model loading attempt {attempt+1} with config: {config}")
-                            _ = torch.load(kokoro_dir / "kokoro-v1_0.pth", **config)
+                            _ = torch.load(model_file_path, **config)
                             print(f"✓ Successfully loaded model with config: {config}")
                             safe_loader_check = True
                             break
@@ -345,11 +374,14 @@ def main():
         if not safe_loader_check:
             print("\nERROR: Model loading failed in OFFLINE_MODE")
             print("       The application will likely fail to start.")
+            return 1
     else:
         print("\nNOTE: Model loading issues will be resolved at runtime.")
         if not hf_token:
             print("      But no HF_TOKEN is set, so private models won't be accessible.")
     
+    # Always return 0 for non-offline mode, even if model loading test fails
+    # This allows the container to start and download models at runtime
     return 0
 
 if __name__ == "__main__":

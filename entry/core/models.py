@@ -5,6 +5,7 @@ import os
 import sys
 import torch
 import traceback
+import pickle
 from typing import Dict, List, Any, Optional, Set
 from loguru import logger
 
@@ -139,14 +140,21 @@ def load_voice_safely(voice_path, pipeline):
         # Use SafeModelLoader context manager for voice loading
         with SafeModelLoader():
             try:
-                # First try direct loading with torch.load (which is patched by SafeModelLoader)
-                voice_model = torch.load(voice_path, map_location='cpu')
+                # First try with weights_only=True to handle newer PyTorch models
+                voice_model = torch.load(voice_path, map_location='cpu', weights_only=True)
                 return voice_model
             except Exception as e:
-                logger.warning(f"Standard loading failed: {str(e)}")
-                # If that fails, try the explicit load_model_safely function
-                logger.warning("Attempting with explicit load_model_safely")
-                return load_model_safely(voice_path, map_location='cpu')
+                logger.warning(f"Loading with weights_only=True failed: {str(e)}")
+                try:
+                    # Try with protocol 2 to handle persistent IDs issue
+                    voice_model = torch.load(voice_path, map_location='cpu', pickle_module=pickle, 
+                                           pickle_load_args={'protocol': 2})
+                    return voice_model
+                except Exception as e2:
+                    logger.warning(f"Loading with protocol 2 failed: {str(e2)}")
+                    # If that fails, try the explicit load_model_safely function
+                    logger.warning("Attempting with explicit load_model_safely")
+                    return load_model_safely(voice_path, map_location='cpu')
     except Exception as e:
         logger.error(f"All voice loading attempts failed: {str(e)}")
         raise

@@ -74,7 +74,7 @@ async def text_to_speech(request: TTSRequest):
             audio_data=audio_data,
             format_name=format_name,
             quality=quality,
-            max_size_kb=request.max_size_kb or 1024
+            max_size_kb=1024  # Default max size
         )
     
     log_operation_start("TTS generation", voice=request.voice, text_length=len(request.text))

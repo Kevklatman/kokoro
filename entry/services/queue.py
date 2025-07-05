@@ -68,7 +68,7 @@ def process_queue():
             sample_rate, audio_data = result
             
             # Use our optimized audio_to_base64 utility
-            audio_base64 = audio_to_base64(audio_data, sample_rate, quality=quality, format=format)
+            audio_base64 = audio_to_base64(audio_data, format=format, quality=quality)
             
             # Update job with results
             job.status = JobStatusEnum.COMPLETED

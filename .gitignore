@@ -198,6 +198,12 @@ uv.lock
 
 README.md
 
+# Model files (keep locally but don't commit)
+models/Kokoro-82M/
+models/kokoro-v1_0.pth
+models/*.pth
+models/voices/*.pt
+
 LICENSE
 
 test_tts.mp3

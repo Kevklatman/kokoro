@@ -260,10 +260,9 @@ async def text_to_speech_base64(request: TTSRequest):
         audio_base64 = encode_audio_base64(audio_bytes)
         
         return {
-            "audio": audio_base64,
-            "format": format_name,
+            "audio_base64": audio_base64,
             "sample_rate": sample_rate,
-            "size_kb": len(audio_bytes) / 1024
+            "phonemes": ""  # TODO: Add phoneme extraction if needed
         }
     
     log_operation_start("TTS base64 generation", voice=request.voice, text_length=len(request.text))

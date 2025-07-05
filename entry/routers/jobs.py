@@ -8,7 +8,7 @@ import traceback
 from entry.models import TTSJobRequest, JobResponse, JobStatus, QueueStatus
 from entry.services.queue import submit_job, get_job_status, get_queue_status, cancel_job
 from entry.utils.error_handling import (
-    safe_execute, handle_http_error, create_not_found_error,
+    safe_execute, handle_http_error, create_not_found_error, create_validation_error,
     log_operation_start, log_operation_success, log_operation_failure
 )
 
@@ -62,7 +62,7 @@ async def get_job_status(job_id: str):
     log_operation_start("job status check", job_id=job_id)
     
     def get_status_safe():
-        job_status = get_job_status_by_id(job_id)
+        job_status = get_job_status(job_id)
         if job_status is None:
             raise create_not_found_error(job_id, "Job")
         return job_status

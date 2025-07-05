@@ -147,12 +147,28 @@ def get_job_status(job_id: str) -> JobStatus:
     if job_id not in jobs_storage:
         raise ValueError(f"Job {job_id} not found")
     
-    job_status = jobs_storage[job_id]
+    job = jobs_storage[job_id]
     
     # Update queue position if job is still queued
-    if job_status.status == JobStatusEnum.QUEUED:
-        job_status.position_in_queue = max(1, job_queue.qsize())
-        job_status.total_in_queue = len(jobs_storage)
+    if job.status == JobStatusEnum.QUEUED:
+        job.position_in_queue = max(1, job_queue.qsize())
+        job.total_in_queue = len(jobs_storage)
+    
+    # Convert TTSJob to JobStatus
+    job_status = JobStatus(
+        job_id=job.id,
+        status=job.status,
+        title=job.title,
+        author=job.author,
+        genre=job.genre,
+        position_in_queue=job.position_in_queue,
+        total_in_queue=job.total_in_queue,
+        created_at=job.created_at,
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+        error_message=getattr(job, 'error', None),
+        audio_base64=getattr(job, 'result', None)
+    )
     
     return job_status
 
@@ -167,11 +183,30 @@ def get_queue_status():
     logger.info(f"  Processing: {processing_count}")
     logger.info(f"  Queued: {queued_count}")
     
+    # Convert jobs to JobStatus objects
+    jobs = []
+    for job in jobs_storage.values():
+        job_status = JobStatus(
+            job_id=job.id,
+            status=job.status,
+            title=job.title,
+            author=job.author,
+            genre=job.genre,
+            position_in_queue=job.position_in_queue,
+            total_in_queue=job.total_in_queue,
+            created_at=job.created_at,
+            started_at=job.started_at,
+            completed_at=job.completed_at,
+            error_message=getattr(job, 'error', None),
+            audio_base64=getattr(job, 'result', None)
+        )
+        jobs.append(job_status)
+    
     return {
         "total_jobs": len(jobs_storage),
         "processing_jobs": processing_count,
         "queued_jobs": queued_count,
-        "queue_size": job_queue.qsize()
+        "jobs": jobs
     }
 
 

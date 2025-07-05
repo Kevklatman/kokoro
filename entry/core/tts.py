@@ -6,6 +6,7 @@ import torch
 import numpy as np
 from typing import Tuple, Optional, List
 from fastapi import HTTPException
+from loguru import logger
 
 from entry.core.models import (
     get_models, get_pipelines, get_voices, get_voice_presets

@@ -199,7 +199,7 @@ def load_voice_packs(models_dir: str) -> set:
             # Try standard loading first
             logger.info(f"Loading voice using pipeline: {voice}")
             pipeline = get_pipeline_for_voice(voice)
-            pipeline.get_reference_audio(voice)
+            pipeline.load_single_voice(voice)
             logger.info(f"Successfully loaded voice: {voice}")
             VOICES.add(voice)
             

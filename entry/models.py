@@ -100,6 +100,9 @@ class TTSJob(BaseModel):
     jitter: float = 0.0
     sultry: float = 0.0
     fiction: bool = False
+    # Audio settings
+    quality: AudioQuality = AudioQuality.AUTO
+    format: AudioFormat = AudioFormat.AUTO
     # Metadata
     title: str = "Untitled"
     author: str = "Unknown Author"

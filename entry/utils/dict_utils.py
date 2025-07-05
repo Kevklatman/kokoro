@@ -2,9 +2,7 @@
 Dictionary utility functions for common operations.
 """
 from typing import Dict, Any, List, Optional, Union
-import logging
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 def safe_dict_get(dictionary: Dict[str, Any], key: str, default: Any = None) -> Any:

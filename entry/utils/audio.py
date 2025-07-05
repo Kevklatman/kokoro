@@ -6,11 +6,9 @@ import wave
 import base64
 import numpy as np
 from typing import Tuple, Optional, Literal, Union
-import logging
+from loguru import logger
 from pydub import AudioSegment
 from entry.utils.string_utils import format_size_info, normalize_string_case
-
-logger = logging.getLogger(__name__)
 
 # Audio format types
 AudioFormat = Literal['wav', 'mp3']

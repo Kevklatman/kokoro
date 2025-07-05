@@ -152,6 +152,20 @@ def load_voice_safely(voice_path, pipeline):
         raise
 
 
+def get_pipeline_for_voice(voice: str):
+    """Get the appropriate pipeline for a voice based on its first character"""
+    # Voice names like 'af_heart', 'am_echo', 'bf_alice' etc.
+    # First character determines the pipeline: 'a' or 'b'
+    if not voice or len(voice) < 1:
+        raise ValueError(f"Invalid voice name: {voice}")
+    
+    pipeline_key = voice[0].lower()
+    if pipeline_key not in pipelines:
+        raise ValueError(f"No pipeline found for voice '{voice}' (pipeline key: '{pipeline_key}')")
+    
+    return pipelines[pipeline_key]
+
+
 def load_voice_packs(models_dir: str) -> set:
     """Load voice packs from models directory"""
     logger.info(f"Loading voice packs from models_dir: {repr(models_dir)}")

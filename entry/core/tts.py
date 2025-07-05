@@ -171,25 +171,29 @@ def generate_audio(
         # Preprocess text
         preprocessed_text = preprocess_text(text)
         
-        # Tokenize text
-        ps = pipeline.tokenize(preprocessed_text)
-        
-        # Get reference audio for voice
+        # Load voice reference audio
         try:
-            ref_s = pipeline.get_reference_audio(voice)
+            ref_s = pipeline.load_voice(voice)
         except Exception as voice_error:
             logger.error(f"Failed to load voice pack for '{voice}': {str(voice_error)}")
             raise HTTPException(status_code=500, detail=f"Failed to load voice '{voice}'")
         
-        # Generate audio
+        # Generate audio using pipeline
         try:
-            if use_gpu and is_gpu_available():
-                audio = forward_gpu(ps, ref_s, speed)
-            else:
-                audio = models[False](ps, ref_s, speed)
+            audio_results = []
+            for result in pipeline(preprocessed_text, voice=voice, speed=speed):
+                if result.audio is not None:
+                    audio_results.append(result.audio.numpy())
+            
+            if not audio_results:
+                raise HTTPException(status_code=500, detail="No audio generated")
+            
+            # Concatenate audio chunks if multiple
+            audio = np.concatenate(audio_results) if len(audio_results) > 1 else audio_results[0]
+            
         except Exception as e:
-            logger.error(f"GPU generation failed, falling back to CPU: {str(e)}")
-            audio = models[False](ps, ref_s, speed)
+            logger.error(f"Audio generation failed: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error generating audio: {str(e)}")
         
         # Apply emotion effects
         audio = apply_emotion_effects(audio, breathiness, tenseness, jitter, sultry)

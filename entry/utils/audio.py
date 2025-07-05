@@ -375,36 +375,46 @@ def create_audio_response(audio_data: np.ndarray, format_name: str, quality: str
 
 
 def encode_mp3(audio_data: np.ndarray, bitrate: str = '192k') -> bytes:
-    """Encode audio data to MP3 format"""
+    """Encode audio data to MP3 format using pydub"""
     # Ensure audio is in the correct format for MP3 encoding
     if audio_data.dtype != np.float32:
         audio_data = audio_data.astype(np.float32)
     
-    # Convert bitrate string to integer
-    bitrate_int = int(bitrate.replace('k', '000'))
+    # First convert to WAV format (in memory)
+    wav_bytes = audio_to_wav_bytes(audio_data, 24000, quality='high')
     
-    # Encode to MP3
-    mp3_bytes = io.BytesIO()
-    sf.write(mp3_bytes, audio_data, 24000, format='mp3', subtype='MPEG_LAYER_III', bitrate=bitrate_int)
-    mp3_bytes.seek(0)
+    # Use pydub to convert WAV to MP3
+    wav_audio = AudioSegment.from_wav(io.BytesIO(wav_bytes))
     
-    encoded_bytes = mp3_bytes.read()
+    # Export as MP3 to a bytes buffer
+    mp3_buffer = io.BytesIO()
+    wav_audio.export(mp3_buffer, format="mp3", bitrate=bitrate)
+    mp3_buffer.seek(0)
+    
+    encoded_bytes = mp3_buffer.read()
     logger.info(f"MP3 encoded size ({bitrate}): {len(encoded_bytes)/1024:.1f}KB")
     
     return encoded_bytes
 
 
 def encode_wav(audio_data: np.ndarray, sample_rate: int = 24000) -> bytes:
-    """Encode audio data to WAV format"""
+    """Encode audio data to WAV format using wave module"""
     # Ensure audio is in the correct format
     if audio_data.dtype != np.float32:
         audio_data = audio_data.astype(np.float32)
     
-    # Encode to WAV
-    wav_bytes = io.BytesIO()
-    sf.write(wav_bytes, audio_data, sample_rate, format='wav', subtype='PCM_16')
-    wav_bytes.seek(0)
+    # Normalize audio for WAV format
+    audio_array = normalize_audio_for_wav(audio_data, bit_depth=16)
     
+    # Encode to WAV using wave module
+    wav_bytes = io.BytesIO()
+    with wave.open(wav_bytes, 'wb') as wav_file:
+        wav_file.setnchannels(1)  # Mono
+        wav_file.setsampwidth(2)  # 16-bit
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(audio_array.tobytes())
+    
+    wav_bytes.seek(0)
     return wav_bytes.read()
 
 

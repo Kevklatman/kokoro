@@ -115,7 +115,7 @@ def forward_gpu(ps, ref_s, speed):
 
 def generate_audio(
     text: str,
-    voice: str = 'af_sky',
+    voice: Optional[str] = 'af_sky',
     speed: float = 1.0,
     use_gpu: bool = True,
     breathiness: float = 0.0,
@@ -141,6 +141,11 @@ def generate_audio(
     """
     # Get model components
     models, pipelines, voices = get_model_components()
+    
+    # Handle None voice by selecting a default
+    if voice is None:
+        voice = 'af_sky'  # Default voice
+        logger.info(f"No voice specified, using default: {voice}")
     
     logger.info(f"Generating audio for voice '{voice}' with speed={speed}, use_gpu={use_gpu}")
     logger.info(f"Available pipelines: {list(pipelines.keys())}")

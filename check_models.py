@@ -84,6 +84,12 @@ print(f"Model loading code: {'Ready' if model_loading_works else 'Not ready'}")
 
 print("\nNOTE: Missing models will be downloaded from Hugging Face at runtime.")
 
+# Initialize module-level variables
+entry_core_models_available = False
+kokoro_model_available = False
+models_loaded = False
+kokoro_loaded = False
+
 # Try to actually load the model
 try:
     print("Attempting to verify model loading...")

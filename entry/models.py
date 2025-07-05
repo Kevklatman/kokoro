@@ -41,6 +41,7 @@ class TTSRequest(BaseModel):
     sultry: float = 0.0
     fiction: bool = False
     use_gpu: Optional[bool] = None
+    preset_name: Optional[str] = None
 
 
 class TokenizeRequest(BaseModel):

@@ -243,3 +243,8 @@ kokoro_front_and_back.code-workspace
 
 .env.develop
 
+test_audio.wav
+.gitignore
+.gitignore
+final_test.wav
+test_output.wav

@@ -91,10 +91,14 @@ RUN if [ -f "/tmp/project/models/kokoro-v1_0.pth" ]; then \
   echo "No kokoro-v1_0.pth found"; \
   fi
 
-# Handle voice files
-RUN if [ -d "/tmp/project/models/voices" ]; then \
+# Handle voice files with debugging
+RUN echo "Checking for voice files..." && \
+  ls -la /tmp/project/models/voices/ 2>/dev/null || echo "No voices directory in /tmp/project/models/" && \
+  if [ -d "/tmp/project/models/voices" ]; then \
+  echo "Found voices directory, copying files..." && \
   find /tmp/project/models/voices -type f -name "*.pt" -exec cp {} /app/models/voices/ \; && \
-  echo "Voice files copied" || echo "No voice files found or failed to copy"; \
+  echo "Voice files copied. Contents of /app/models/voices:" && \
+  ls -la /app/models/voices/ || echo "Failed to list voice files"; \
   else \
   echo "No voices directory found"; \
   fi

@@ -72,26 +72,25 @@ def select_voice_and_preset(
     """
     voice_presets = get_voice_presets()
     
-    # ENFORCE: Always use preset values for fiction and non-fiction
-    if fiction is not None:
-        if fiction:
-            # Fiction: af_sky preset (override everything)
-            return 'af_sky', {
-                'speed': 1.0,
-                'breathiness': 0,
-                'tenseness': 0,
-                'jitter': 0,
-                'sultry': 0
-            }
-        else:
-            # Non-fiction: af_heart preset (override everything)
-            return 'af_heart', {
-                'speed': 1.0,
-                'breathiness': 0,
-                'tenseness': 0,
-                'jitter': 0,
-                'sultry': 0
-            }
+    # ENFORCE: Only use preset values when fiction is explicitly set (not default False)
+    if fiction is True:  # Explicitly fiction
+        # Fiction: af_sky preset (override everything)
+        return 'af_sky', {
+            'speed': 1.0,
+            'breathiness': 0,
+            'tenseness': 0,
+            'jitter': 0,
+            'sultry': 0
+        }
+    elif fiction is False and requested_voice is None:  # Explicitly non-fiction AND no voice specified
+        # Non-fiction: af_heart preset (only when no voice specified)
+        return 'af_heart', {
+            'speed': 1.0,
+            'breathiness': 0,
+            'tenseness': 0,
+            'jitter': 0,
+            'sultry': 0
+        }
     
     if preset_name and preset_name in voice_presets:
         preset = voice_presets[preset_name]

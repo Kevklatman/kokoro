@@ -1,0 +1,16 @@
+# Exclude large model files to keep deployment size reasonable
+models/Kokoro-82M/
+models/kokoro-v1_0.pth
+models/*.pth
+models/samples/*.wav
+models/eval/*.jpeg
+kokoro.js/voices/*.bin
+models/Kokoro-82M/models--hexgrad--Kokoro-82M/blobs/*
+
+# But explicitly include the voice files we need
+!models/voices/*.pt
+
+# Standard exclusions
+.gcloudignore
+.git
+.gitignore 

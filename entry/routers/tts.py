@@ -70,19 +70,27 @@ async def text_to_speech(request: TTSRequest):
         format_name = validate_audio_format(request.format or 'wav')
         quality = validate_audio_quality(request.quality or 'high')
         
-        return create_audio_response(
-            audio_data=audio_data,
-            format_name=format_name,
-            quality=quality,
-            max_size_kb=1024  # Default max size
-        )
+        # Encode audio to bytes
+        audio_bytes = encode_audio_to_format(audio_data, format_name, quality)
+        
+        # Check if size optimization is needed
+        size_kb = len(audio_bytes) / 1024
+        if size_kb > 1024:  # Default max size
+            audio_bytes, actual_quality = optimize_audio_size(audio_data, 1024, format_name)
+        
+        return audio_bytes
     
     log_operation_start("TTS generation", voice=request.voice, text_length=len(request.text))
     
     try:
-        result = safe_execute(generate_audio_safe, context="TTS generation")
+        audio_bytes = safe_execute(generate_audio_safe, context="TTS generation")
         log_operation_success("TTS generation", voice=request.voice)
-        return result
+        
+        # Determine content type based on format
+        format_name = validate_audio_format(request.format or 'wav')
+        content_type = f"audio/{format_name}"
+        
+        return Response(content=audio_bytes, media_type=content_type)
     except HTTPException:
         raise
     except Exception as e:

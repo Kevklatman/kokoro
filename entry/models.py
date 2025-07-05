@@ -40,6 +40,7 @@ class TTSRequest(BaseModel):
     jitter: float = 0.0
     sultry: float = 0.0
     fiction: bool = False
+    use_gpu: Optional[bool] = None
 
 
 class TokenizeRequest(BaseModel):

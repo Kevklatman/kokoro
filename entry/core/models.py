@@ -160,8 +160,10 @@ def get_pipeline_for_voice(voice: str):
         raise ValueError(f"Invalid voice name: {voice}")
     
     pipeline_key = voice[0].lower()
-    if pipeline_key not in pipelines:
-        raise ValueError(f"No pipeline found for voice '{voice}' (pipeline key: '{pipeline_key}')")
+    
+    # Check if pipelines are available
+    if not pipelines or pipeline_key not in pipelines:
+        raise ValueError(f"No pipeline found for voice '{voice}' (pipeline key: '{pipeline_key}'). Pipelines not yet initialized.")
     
     return pipelines[pipeline_key]
 

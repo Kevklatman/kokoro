@@ -248,3 +248,8 @@ test_audio.wav
 .gitignore
 final_test.wav
 test_output.wav
+
+
+SLOW_AUDIO_FIX.md
+
+test_speed_fix.py

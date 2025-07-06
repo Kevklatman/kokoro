@@ -106,26 +106,9 @@ def add_sultry(audio, amount=0.0):
         mix_ratio = amount * 0.6
         result = audio * (1 - mix_ratio) + smoothed * mix_ratio
         
-        # Apply gentle time stretching effect only if audio is long enough
-        if audio_len > 1000:
-            try:
-                # Slight time stretch to slow down delivery
-                stretch_factor = 1.0 + (amount * 0.1)  # Max 10% slower
-                orig_len = result.shape[0]
-                new_len = int(orig_len * stretch_factor)
-                
-                # Create interpolation indices
-                indices = torch.linspace(0, orig_len - 1, new_len)
-                idx_floor = indices.floor().long()
-                idx_ceil = indices.ceil().long().clamp(max=orig_len-1)
-                alpha = indices - idx_floor
-                
-                # Interpolate to create the stretched audio
-                stretched = result[idx_floor] * (1 - alpha) + result[idx_ceil] * alpha
-                result = stretched[:orig_len]  # Keep original length
-            except Exception:
-                # If stretching fails, just continue with unstretched audio
-                pass
+        # REMOVED TIME STRETCHING - this was causing slow audio for large texts
+        # The time stretching effect was being applied even with small amounts
+        # and was cumulative across text chunks, making long texts progressively slower
                 
     except Exception as e:
         # If anything fails, just return the original audio with minimal processing

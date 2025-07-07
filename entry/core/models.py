@@ -52,7 +52,7 @@ CHOICES = {
 VOICE_PRESETS = {
     'fiction': {
         'voice': 'af_sky',
-        'speed': 1.1,
+        'speed': 1.0,
         'breathiness': 0.1,
         'tenseness': 0.1,
         'jitter': 0.15,
